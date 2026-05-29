@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 420" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <rect width="600" height="420" fill="#0f172a" rx="12"/>
+  <text x="300" y="36" text-anchor="middle" fill="#e2e8f0" font-size="18" font-weight="700">设备驱动模型架构</text>
+  <rect x="40" y="56" width="520" height="48" rx="8" fill="#1e3a5f" stroke="#06b6d4" stroke-width="1.5"/>
+  <text x="300" y="86" text-anchor="middle" fill="#06b6d4" font-size="14" font-weight="600">应用代码 (Application)</text>
+  <text x="300" y="132" text-anchor="middle" fill="#94a3b8" font-size="12">调用通用 API ↓</text>
+  <rect x="40" y="146" width="520" height="48" rx="8" fill="#1e3a5f" stroke="#8b5cf6" stroke-width="1.5"/>
+  <text x="300" y="176" text-anchor="middle" fill="#8b5cf6" font-size="14" font-weight="600">通用驱动 API (gpio_pin_set / i2c_write / spi_transceive)</text>
+  <text x="300" y="222" text-anchor="middle" fill="#94a3b8" font-size="12">API 结构体指针 ↓</text>
+  <rect x="40" y="236" width="160" height="48" rx="8" fill="#1e3a5f" stroke="#10b981" stroke-width="1.5"/>
+  <text x="120" y="266" text-anchor="middle" fill="#10b981" font-size="13" font-weight="600">GPIO 驱动</text>
+  <rect x="220" y="236" width="160" height="48" rx="8" fill="#1e3a5f" stroke="#10b981" stroke-width="1.5"/>
+  <text x="300" y="266" text-anchor="middle" fill="#10b981" font-size="13" font-weight="600">I2C 驱动</text>
+  <rect x="400" y="236" width="160" height="48" rx="8" fill="#1e3a5f" stroke="#10b981" stroke-width="1.5"/>
+  <text x="480" y="266" text-anchor="middle" fill="#10b981" font-size="13" font-weight="600">SPI 驱动</text>
+  <text x="300" y="316" text-anchor="middle" fill="#94a3b8" font-size="12">设备树 (Device Tree) 描述硬件 ↓</text>
+  <rect x="40" y="330" width="520" height="48" rx="8" fill="#1e3a5f" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="300" y="360" text-anchor="middle" fill="#f59e0b" font-size="14" font-weight="600">设备树 (DTS): compatible / reg / status / interrupts</text>
+  <text x="300" y="406" text-anchor="middle" fill="#64748b" font-size="12">驱动与 API 解耦 → 换芯片只需改设备树，应用代码无需修改</text>
+</svg>

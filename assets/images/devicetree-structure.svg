@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 440" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <rect width="600" height="440" fill="#0f172a" rx="12"/>
+  <text x="300" y="36" text-anchor="middle" fill="#e2e8f0" font-size="18" font-weight="700">设备树 (Device Tree) 结构</text>
+  <rect x="180" y="56" width="240" height="40" rx="8" fill="#1e3a5f" stroke="#06b6d4" stroke-width="1.5"/>
+  <text x="300" y="82" text-anchor="middle" fill="#06b6d4" font-size="13" font-weight="600">/ (根节点)</text>
+  <line x1="220" y1="96" x2="120" y2="120" stroke="#64748b" stroke-width="1"/>
+  <line x1="300" y1="96" x2="300" y2="120" stroke="#64748b" stroke-width="1"/>
+  <line x1="380" y1="96" x2="480" y2="120" stroke="#64748b" stroke-width="1"/>
+  <rect x="40" y="120" width="160" height="40" rx="6" fill="#1e3a5f" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="120" y="146" text-anchor="middle" fill="#8b5cf6" font-size="12" font-weight="600">cpus { }</text>
+  <rect x="220" y="120" width="160" height="40" rx="6" fill="#1e3a5f" stroke="#10b981" stroke-width="1"/>
+  <text x="300" y="146" text-anchor="middle" fill="#10b981" font-size="12" font-weight="600">soc { }</text>
+  <rect x="400" y="120" width="160" height="40" rx="6" fill="#1e3a5f" stroke="#f59e0b" stroke-width="1"/>
+  <text x="480" y="146" text-anchor="middle" fill="#f59e0b" font-size="12" font-weight="600">chosen { }</text>
+  <line x1="120" y1="160" x2="120" y2="184" stroke="#64748b" stroke-width="1"/>
+  <rect x="40" y="184" width="160" height="40" rx="6" fill="#1e293b" stroke="#8b5cf6" stroke-width="1" stroke-dasharray="4"/>
+  <text x="120" y="210" text-anchor="middle" fill="#8b5cf6" font-size="11">cpu0: arm,cortex-m4</text>
+  <line x1="300" y1="160" x2="200" y2="184" stroke="#64748b" stroke-width="1"/>
+  <line x1="300" y1="160" x2="400" y2="184" stroke="#64748b" stroke-width="1"/>
+  <rect x="120" y="184" width="160" height="40" rx="6" fill="#1e293b" stroke="#10b981" stroke-width="1" stroke-dasharray="4"/>
+  <text x="200" y="210" text-anchor="middle" fill="#10b981" font-size="11">i2c0: nordic,nrf-i2c</text>
+  <rect x="320" y="184" width="160" height="40" rx="6" fill="#1e293b" stroke="#10b981" stroke-width="1" stroke-dasharray="4"/>
+  <text x="400" y="210" text-anchor="middle" fill="#10b981" font-size="11">spi1: nordic,nrf-spi</text>
+  <text x="300" y="260" text-anchor="middle" fill="#94a3b8" font-size="13">文件类型</text>
+  <rect x="40" y="276" width="160" height="44" rx="6" fill="#1e3a5f" stroke="#06b6d4" stroke-width="1"/>
+  <text x="120" y="296" text-anchor="middle" fill="#06b6d4" font-size="12" font-weight="600">.dts</text>
+  <text x="120" y="312" text-anchor="middle" fill="#64748b" font-size="10">板级完整描述</text>
+  <rect x="220" y="276" width="160" height="44" rx="6" fill="#1e3a5f" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="300" y="296" text-anchor="middle" fill="#8b5cf6" font-size="12" font-weight="600">.dtsi</text>
+  <text x="300" y="312" text-anchor="middle" fill="#64748b" font-size="10">SoC 公共定义</text>
+  <rect x="400" y="276" width="160" height="44" rx="6" fill="#1e3a5f" stroke="#f59e0b" stroke-width="1"/>
+  <text x="480" y="296" text-anchor="middle" fill="#f59e0b" font-size="12" font-weight="600">.overlay</text>
+  <text x="480" y="312" text-anchor="middle" fill="#64748b" font-size="10">用户自定义覆盖</text>
+  <text x="300" y="356" text-anchor="middle" fill="#94a3b8" font-size="13">C 代码访问方式</text>
+  <rect x="60" y="370" width="480" height="44" rx="6" fill="#1e293b" stroke="#10b981" stroke-width="1"/>
+  <text x="300" y="390" text-anchor="middle" fill="#10b981" font-size="12" font-family="'Cascadia Code','Fira Code',Consolas,monospace">DT_NODELABEL(i2c0) / DT_PATH(soc, i2c0) / DT_ALIAS()</text>
+  <text x="300" y="406" text-anchor="middle" fill="#64748b" font-size="10">编译时宏展开，零运行时开销</text>
+</svg>

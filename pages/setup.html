@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>开发环境搭建 - Zephyr RTOS 中文知识库</title>
+  <link rel="stylesheet" href="/assets/css/main.css">
+</head>
+<body>
+  <div class="content-wrapper">
+    <div class="toc"></div>
+    <div class="content">
+      <h1>开发环境搭建</h1>
+      <p class="subtitle">从零开始，手把手带你搭建 Zephyr RTOS 开发环境，运行第一个程序</p>
+
+      <h2 id="sdk">安装 SDK 与工具链</h2>
+
+      <p>搭建 Zephyr 开发环境就像装修一间厨房——你需要先装好水管和燃气（工具链），再摆好锅碗瓢盆（SDK），最后才能开始做菜（写代码）。整个过程虽然步骤不少，但只要按顺序来，一点都不难。</p>
+
+      <h3>1. 安装 Python 和 pip</h3>
+
+      <p>Zephyr 的构建系统 <strong>West</strong> 是用 Python 写的，所以 Python 是最基础的依赖。你需要 <strong>Python 3.8 或更高版本</strong>。大部分 Linux 发行版和 macOS 已经自带了 Python，Windows 用户需要手动安装。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 检查 Python 版本</span>
+python3 --version
+
+<span class="cm"># 确保 pip 是最新的</span>
+python3 -m pip install --upgrade pip</code></pre>
+      </div>
+
+      <h3>2. 安装 West</h3>
+
+      <p><strong>West</strong> 是 Zephyr 的"管家工具"，它负责管理多个代码仓库（类似 git submodule 的升级版），还负责调用构建系统。你可以把它理解为一个专门为 Zephyr 定制的超级 Makefile。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 安装 West</span>
+pip install west</code></pre>
+      </div>
+
+      <h3>3. 初始化 Zephyr 仓库</h3>
+
+      <p>接下来用 West 把 Zephyr 的源码和相关模块都拉下来。这一步会下载不少代码，请确保网络通畅。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 初始化 Zephyr 仓库（以 v3.7 为例）</span>
+west init zephyr-workspace -m https://github.com/zephyrproject-rtos/zephyr --mr v3.7-branch
+cd zephyr-workspace
+
+<span class="cm"># 拉取所有依赖模块（这一步比较耗时，耐心等待）</span>
+west update</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>提示：</strong><code>west update</code> 会下载几十个仓库，如果网络不稳定可能会中断。可以多次运行直到全部成功。国内用户建议配置代理或使用镜像源。</p>
+      </blockquote>
+
+      <h3>4. 安装 Python 依赖</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 安装 Zephyr 所需的 Python 包</span>
+pip install -r zephyr/scripts/requirements.txt</code></pre>
+      </div>
+
+      <h3>5. 安装 Zephyr SDK（工具链）</h3>
+
+      <p>Zephyr SDK 包含了针对各种架构（ARM、RISC-V、x86 等）的交叉编译器、调试器和烧录工具。就像你需要不同的翻译官才能跟不同国家的人交流一样，你需要不同的编译器才能为不同的芯片生成代码。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># Linux / macOS：下载并安装 Zephyr SDK</span>
+cd ~
+wget https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.16.5/zephyr-sdk-0.16.5_linux-x86_64.tar.xz
+tar xvf zephyr-sdk-0.16.5_linux-x86_64.tar.xz
+cd zephyr-sdk-0.16.5
+
+<span class="cm"># 安装所有架构的工具链</span>
+./setup.sh
+
+<span class="cm"># 如果只需要 ARM 架构（大部分开发板是 ARM）</span>
+./setup.sh -t arm-zephyr-eabi</code></pre>
+      </div>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">powershell</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># Windows：下载 Zephyr SDK 安装器</span>
+<span class="cm"># 访问 https://github.com/zephyrproject-rtos/sdk-ng/releases</span>
+<span class="cm"># 下载 zephyr-sdk-0.16.5_windows-x86_64.msi</span>
+<span class="cm"># 双击运行安装器，选择安装路径（建议不要有空格和中文）</span>
+<span class="cm"># 安装时勾选需要的架构（至少选 ARM）</span></code></pre>
+      </div>
+
+      <h3>6. 设置环境变量</h3>
+
+      <p>最后一步，让系统知道 Zephyr 在哪里。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># Linux / macOS：在 ~/.bashrc 或 ~/.zshrc 中添加</span>
+<span class="kw">export</span> ZEPHYR_BASE=<span class="str">~/zephyr-workspace/zephyr</span>
+<span class="kw">source</span> ~/zephyr-workspace/zephyr/zephyr-env.sh</code></pre>
+      </div>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">powershell</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># Windows：在系统环境变量中添加</span>
+<span class="cm"># ZEPHYR_BASE = C:\zephyr-workspace\zephyr</span>
+<span class="cm"># 或者在 PowerShell 中临时设置：</span>
+$env:ZEPHYR_BASE = <span class="str">"C:\zephyr-workspace\zephyr"</span>
+python zephyr/scripts/zephyr_env.py</code></pre>
+      </div>
+
+      <div class="info-card tip-card">
+        <div class="info-card-title">💡 验证安装</div>
+        <p>运行 <code>west --version</code> 和 <code>cmake --version</code> 确认工具链已就绪。如果都能正常输出版本号，恭喜你，厨房装修完毕！</p>
+      </div>
+
+      <h2 id="hello-world">第一个 Hello World 程序</h2>
+
+      <p>环境搭好了，是时候让开发板"说话"了！我们先创建一个最简单的 Blinky 程序——让 LED 灯闪烁，这是嵌入式世界的 "Hello World"。</p>
+
+      <h3>项目结构</h3>
+
+      <p>一个典型的 Zephyr 应用最少需要三个文件：</p>
+
+      <ul>
+        <li><strong>src/main.c</strong> — 程序源代码</li>
+        <li><strong>prj.conf</strong> — 项目配置（开启/关闭功能模块）</li>
+        <li><strong>CMakeLists.txt</strong> — 构建脚本（告诉 CMake 怎么编译）</li>
+      </ul>
+
+      <h3>main.c — 程序源码</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">c</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/kernel.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/drivers/gpio.h&gt;</span>
+
+<span class="macro">#define</span> <span class="var">LED0_NODE</span> <span class="fn">DT_ALIAS</span>(<span class="var">led0</span>)
+
+<span class="kw">static</span> <span class="kw">const</span> <span class="kw">struct</span> <span class="type">gpio_dt_spec</span> led = <span class="fn">GPIO_DT_SPEC_GET</span>(<span class="var">LED0_NODE</span>, gpios);
+
+<span class="kw">int</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+    <span class="kw">int</span> ret;
+
+    <span class="kw">if</span> (!<span class="fn">gpio_is_ready_dt</span>(&amp;led)) {
+        <span class="kw">return</span> -<span class="num">1</span>;
+    }
+
+    ret = <span class="fn">gpio_pin_configure_dt</span>(&amp;led, <span class="type">GPIO_OUTPUT_ACTIVE</span>);
+    <span class="kw">if</span> (ret &lt; <span class="num">0</span>) {
+        <span class="kw">return</span> -<span class="num">1</span>;
+    }
+
+    <span class="kw">while</span> (<span class="num">1</span>) {
+        <span class="fn">gpio_pin_toggle_dt</span>(&amp;led);
+        <span class="fn">printk</span>(<span class="str">"LED toggled!\n"</span>);
+        <span class="fn">k_msleep</span>(<span class="num">1000</span>);
+    }
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <p>这段代码做了三件事：首先检查 GPIO 是否就绪，然后配置 LED 引脚为输出模式，最后在无限循环中每隔 1 秒切换 LED 状态并打印日志。<code>k_msleep()</code> 是 Zephyr 的延时函数，它会让当前线程休眠，CPU 可以去做别的事情——这比裸机程序里的 <code>delay()</code> 死等要优雅得多。</p>
+
+      <h3>prj.conf — 项目配置</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">conf</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 启用 GPIO 驱动</span>
+<span class="kw">CONFIG_GPIO</span>=y
+
+<span class="cm"># 启用 printk 打印输出</span>
+<span class="kw">CONFIG_PRINTK</span>=y
+
+<span class="cm"># 启用串口控制台（用于查看 printk 输出）</span>
+<span class="kw">CONFIG_SERIAL</span>=y
+
+<span class="cm"># 启用 UART 控制台</span>
+<span class="kw">CONFIG_UART_CONSOLE</span>=y</code></pre>
+      </div>
+
+      <p><code>prj.conf</code> 就像手机的"设置"App——你在这里开关各种功能。Zephyr 采用 <strong>Kconfig</strong> 机制，只编译你用到的模块，所以最终生成的固件非常精简。</p>
+
+      <h3>CMakeLists.txt — 构建脚本</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">cmake</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="fn">cmake_minimum_required</span>(<span class="str">VERSION</span> <span class="num">3.20.0</span>)
+
+<span class="fn">find_package</span>(<span class="str">Zephyr</span> <span class="kw">REQUIRED</span> <span class="str">HINTS</span> $ENV{ZEPHYR_BASE})
+<span class="fn">project</span>(<span class="str">blinky</span>)
+
+<span class="fn">target_sources</span>(<span class="str">app</span> <span class="kw">PRIVATE</span> <span class="str">src/main.c</span>)</code></pre>
+      </div>
+
+      <h3>编译与烧录</h3>
+
+      <p>万事俱备，开始编译！<code>-b</code> 参数指定目标开发板，Zephyr 会自动选择对应的工具链和设备树配置。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 编译（以 nRF52840 DK 开发板为例）</span>
+west build -b nrf52840dk/nrf52840 -p auto
+
+<span class="cm"># 烧录到开发板</span>
+west flash
+
+<span class="cm"># 查看串口输出</span>
+<span class="cm"># Linux:</span>
+minicom -D /dev/ttyACM0
+<span class="cm"># macOS:</span>
+minicom -D /dev/tty.usbmodem*
+<span class="cm"># Windows: 使用 PuTTY 或 Tera Term，波特率 115200</span></code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>提示：</strong><code>-p auto</code> 表示自动清理之前的构建缓存。如果你改了配置但编译结果没变化，试试加上这个参数。如果遇到莫名其妙的编译错误，也可以先删掉 <code>build/</code> 目录再重新编译。</p>
+      </blockquote>
+
+      <div class="info-card">
+        <div class="info-card-title">🎯 其他开发板的板名</div>
+        <p>常见开发板名称：<code>nrf52840dk/nrf52840</code>（Nordic）、<code>stm32f429i_disc1</code>（STM32）、<code>esp32_devkitc/esp32/procpu</code>（ESP32）。运行 <code>west boards</code> 可以查看所有支持的开发板列表。</p>
+      </div>
+
+      <h2 id="vscode">VS Code 开发环境配置</h2>
+
+      <p>虽然命令行能完成所有工作，但一个好的 IDE 能让你的开发效率翻倍。VS Code 是目前 Zephyr 开发最受欢迎的编辑器，配置好之后可以享受代码补全、跳转定义、一键编译、图形化调试等便利。</p>
+
+      <h3>推荐扩展</h3>
+
+      <ul>
+        <li><strong>C/C++</strong>（Microsoft）— 代码补全、语法高亮、跳转定义的基础</li>
+        <li><strong>CMake Tools</strong> — CMake 语法支持、配置管理、一键构建</li>
+        <li><strong>Cortex-Debug</strong> — ARM Cortex 芯片的图形化调试（断点、单步、变量查看）</li>
+        <li><strong>Zephyr Tools</strong>（社区）— 提供 West 命令集成和设备树语法支持</li>
+      </ul>
+
+      <h3>C/C++ 智能提示配置</h3>
+
+      <p>编译完成后，Zephyr 会在 <code>build/</code> 目录下生成 <code>compile_commands.json</code>，这是让 VS Code 理解代码结构的关键文件。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">json</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code>{
+  <span class="str">"configurations"</span>: [
+    {
+      <span class="str">"name"</span>: <span class="str">"Zephyr"</span>,
+      <span class="str">"compileCommands"</span>: <span class="str">"${workspaceFolder}/build/compile_commands.json"</span>,
+      <span class="str">"includePath"</span>: [
+        <span class="str">"${workspaceFolder}/zephyr/include"</span>,
+        <span class="str">"${workspaceFolder}/zephyr/soc"</span>,
+        <span class="str">"${workspaceFolder}/modules/**"</span>
+      ],
+      <span class="str">"cStandard"</span>: <span class="str">"c99"</span>,
+      <span class="str">"intelliSenseMode"</span>: <span class="str">"gcc-arm"</span>
+    }
+  ],
+  <span class="str">"version"</span>: <span class="num">4</span>
+}</code></pre>
+      </div>
+
+      <h3>调试配置（launch.json）</h3>
+
+      <p>调试嵌入式程序和调试普通软件不一样——你需要通过调试器（如 J-Link、ST-Link）连接到芯片，才能设断点、看变量。下面以 J-Link + nRF52840 为例：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">json</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code>{
+  <span class="str">"version"</span>: <span class="str">"0.2.0"</span>,
+  <span class="str">"configurations"</span>: [
+    {
+      <span class="str">"name"</span>: <span class="str">"Cortex Debug"</span>,
+      <span class="str">"cwd"</span>: <span class="str">"${workspaceFolder}"</span>,
+      <span class="str">"executable"</span>: <span class="str">"${workspaceFolder}/build/zephyr/zephyr.elf"</span>,
+      <span class="str">"request"</span>: <span class="str">"launch"</span>,
+      <span class="str">"type"</span>: <span class="str">"cortex-debug"</span>,
+      <span class="str">"servertype"</span>: <span class="str">"jlink"</span>,
+      <span class="str">"device"</span>: <span class="str">"nRF52840_xxAA"</span>,
+      <span class="str">"interface"</span>: <span class="str">"swd"</span>,
+      <span class="str">"runToEntryPoint"</span>: <span class="str">"main"</span>,
+      <span class="str">"svdFile"</span>: <span class="str">"${workspaceFolder}/zephyr/dt/bindings/arm/nordic/nrf52840.svd"</span>
+    }
+  ]
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>提示：</strong>如果你用的是 ST-Link 调试器，把 <code>servertype</code> 改为 <code>"stlink"</code>，<code>device</code> 改为对应的 STM32 型号即可。SVD 文件可以让你在调试时查看外设寄存器的值，非常方便。</p>
+      </blockquote>
+
+      <h3>一键编译任务</h3>
+
+      <p>你还可以配置 VS Code 的 Task，实现快捷键一键编译：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">json</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code>{
+  <span class="str">"version"</span>: <span class="str">"2.0.0"</span>,
+  <span class="str">"tasks"</span>: [
+    {
+      <span class="str">"label"</span>: <span class="str">"West Build"</span>,
+      <span class="str">"type"</span>: <span class="str">"shell"</span>,
+      <span class="str">"command"</span>: <span class="str">"west build -b nrf52840dk/nrf52840 -p auto"</span>,
+      <span class="str">"group"</span>: {
+        <span class="str">"kind"</span>: <span class="str">"build"</span>,
+        <span class="str">"isDefault"</span>: <span class="kw">true</span>
+      },
+      <span class="str">"problemMatcher"</span>: <span class="str">"$gcc"</span>
+    },
+    {
+      <span class="str">"label"</span>: <span class="str">"West Flash"</span>,
+      <span class="str">"type"</span>: <span class="str">"shell"</span>,
+      <span class="str">"command"</span>: <span class="str">"west flash"</span>,
+      <span class="str">"dependsOn"</span>: <span class="str">"West Build"</span>
+    }
+  ]
+}</code></pre>
+      </div>
+
+      <div class="info-card">
+        <div class="info-card-title">🔌 官方 Zephyr 扩展</div>
+        <p>Zephyr 项目官方提供了 VS Code 扩展（搜索 "Zephyr" 即可找到），它集成了 West 命令、设备树可视化、Kconfig 图形化编辑等功能，适合不想手动配置的用户。不过目前该扩展还处于快速迭代阶段，部分功能可能不够稳定。</p>
+      </div>
+
+      <h2 id="boards">开发板选择指南</h2>
+
+      <p>选开发板就像选车——没有"最好的"，只有"最适合你的"。下面推荐三款入门最主流的板子，分别对应不同的应用方向。</p>
+
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>特性</th>
+            <th>nRF52840 DK</th>
+            <th>STM32 Nucleo-F429ZI</th>
+            <th>ESP32-DevKitC</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>芯片</strong></td>
+            <td>nRF52840（ARM Cortex-M4F）</td>
+            <td>STM32F429ZI（ARM Cortex-M4F）</td>
+            <td>ESP32（Xtensa 双核）</td>
+          </tr>
+          <tr>
+            <td><strong>主频</strong></td>
+            <td>64 MHz</td>
+            <td>180 MHz</td>
+            <td>240 MHz</td>
+          </tr>
+          <tr>
+            <td><strong>Flash / RAM</strong></td>
+            <td>1 MB / 256 KB</td>
+            <td>2 MB / 256 KB</td>
+            <td>4 MB / 520 KB</td>
+          </tr>
+          <tr>
+            <td><strong>无线功能</strong></td>
+            <td>BLE 5.3、IEEE 802.15.4</td>
+            <td>无</td>
+            <td>Wi-Fi、BLE 4.2</td>
+          </tr>
+          <tr>
+            <td><strong>调试器</strong></td>
+            <td>板载 J-Link OB</td>
+            <td>板载 ST-Link v2</td>
+            <td>需外接 J-Link</td>
+          </tr>
+          <tr>
+            <td><strong>参考价格</strong></td>
+            <td>约 ¥300-400</td>
+            <td>约 ¥120-180</td>
+            <td>约 ¥50-80</td>
+          </tr>
+          <tr>
+            <td><strong>适合方向</strong></td>
+            <td>BLE 外设、IoT 传感器</td>
+            <td>通用嵌入式学习、电机控制</td>
+            <td>Wi-Fi 联网、智能家居</td>
+          </tr>
+          <tr>
+            <td><strong>优点</strong></td>
+            <td>BLE 生态最成熟、文档丰富、板载调试器</td>
+            <td>性价比高、外设丰富、社区资源多</td>
+            <td>最便宜、自带 Wi-Fi、双核性能强</td>
+          </tr>
+          <tr>
+            <td><strong>缺点</strong></td>
+            <td>价格偏高、无 Wi-Fi</td>
+            <td>无无线功能、引脚布局较密</td>
+            <td>Xtensa 架构工具链支持较弱、需外接调试器</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="info-card tip-card">
+        <div class="info-card-title">💡 新手建议</div>
+        <p>如果你是第一次接触 Zephyr，<strong>推荐从 nRF52840 DK 开始</strong>。原因很简单：板载 J-Link 调试器省去了额外购买调试器的麻烦，Nordic 官方对 Zephyr 的支持最为完善，BLE 示例最多，遇到问题也最容易找到解决方案。等熟悉了再换其他板子也不迟。</p>
+      </div>
+
+      <h2 id="troubleshooting">常见安装问题与解决方案</h2>
+
+      <p>搭建环境的过程中踩坑是正常的——几乎每个 Zephyr 新手都会遇到一些问题。下面列出最高频的问题和对应的解决办法，帮你少走弯路。</p>
+
+      <h3>Python 版本过低</h3>
+
+      <div class="info-card warning-card">
+        <div class="info-card-title">⚠️ 症状</div>
+        <p>运行 <code>west</code> 或 <code>pip install</code> 时报错，提示 Python 版本不兼容。</p>
+      </div>
+
+      <p>Zephyr 要求 Python 3.8+，但有些系统默认的 <code>python</code> 命令指向的是 Python 2.7。你可以用 <code>python3</code> 代替 <code>python</code>，或者通过 <code>python3 --version</code> 确认版本。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># Ubuntu 安装新版 Python</span>
+sudo apt install python3.10 python3-pip
+
+<span class="cm"># 用 python3 代替 python</span>
+<span class="kw">alias</span> python=python3</code></pre>
+      </div>
+
+      <h3>west 命令找不到</h3>
+
+      <div class="info-card warning-card">
+        <div class="info-card-title">⚠️ 症状</div>
+        <p>安装了 West 但终端提示 <code>west: command not found</code>。</p>
+      </div>
+
+      <p>这通常是因为 pip 的安装路径不在系统 PATH 中。最简单的解决办法是用 <code>python3 -m west</code> 代替 <code>west</code>，或者把 pip 的 bin 目录加入 PATH。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 查看 pip 安装路径</span>
+python3 -m pip show west
+
+<span class="cm"># 方法一：用 python -m 方式运行</span>
+python3 -m west init ...
+
+<span class="cm"># 方法二：添加到 PATH（Linux）</span>
+<span class="kw">export</span> PATH=<span class="str">"$HOME/.local/bin:$PATH"</span></code></pre>
+      </div>
+
+      <h3>工具链错误</h3>
+
+      <div class="info-card warning-card">
+        <div class="info-card-title">⚠️ 症状</div>
+        <p>编译时报错 <code>zephyr-sdk-0.16.5/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc: No such file or directory</code>。</p>
+      </div>
+
+      <p>说明 Zephyr SDK 没有安装或者路径不对。请确认你已经运行了 SDK 的 <code>setup.sh</code>（Linux/macOS）或安装了 MSI（Windows），并且 SDK 路径没有包含空格或中文字符。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 重新运行 SDK 安装脚本</span>
+cd ~/zephyr-sdk-0.16.5
+./setup.sh
+
+<span class="cm"># 确认工具链存在</span>
+ls ~/zephyr-sdk-0.16.5/arm-zephyr-eabi/bin/</code></pre>
+      </div>
+
+      <h3>CMake 版本过低</h3>
+
+      <div class="info-card warning-card">
+        <div class="info-card-title">⚠️ 症状</div>
+        <p>编译时报错 <code>CMake 3.20.0 or higher is required</code>。</p>
+      </div>
+
+      <p>Zephyr 3.7 要求 CMake 3.20+，但 Ubuntu 20.04 自带的 CMake 版本只有 3.16。需要手动安装新版本：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 通过 pip 安装最新 CMake（推荐）</span>
+pip install cmake --upgrade
+
+<span class="cm"># 或者从 Kitware 官方源安装（Ubuntu）</span>
+sudo apt remove cmake
+pip3 install cmake --user
+
+<span class="cm"># 验证版本</span>
+cmake --version</code></pre>
+      </div>
+
+      <h3>Windows 权限问题</h3>
+
+      <div class="info-card danger-card">
+        <div class="info-card-title">🚫 症状</div>
+        <p>Windows 上运行 <code>west flash</code> 或安装驱动时报权限错误。</p>
+      </div>
+
+      <p>Windows 上烧录开发板需要安装正确的驱动程序。Nordic 的开发板需要安装 <strong>nRF Connect for Desktop</strong> 中的 J-Link 驱动；STM32 Nucleo 需要 ST-Link 驱动。此外，部分操作需要以管理员权限运行终端。</p>
+
+      <ul>
+        <li>以管理员身份打开 PowerShell 或 CMD</li>
+        <li>安装对应开发板的 USB 驱动</li>
+        <li>确认设备管理器中能看到开发板</li>
+        <li>如果使用 Zadig 替换了驱动，可能需要恢复默认驱动</li>
+      </ul>
+
+      <h3>网络代理设置</h3>
+
+      <div class="info-card warning-card">
+        <div class="info-card-title">⚠️ 症状</div>
+        <p><code>west update</code> 或 <code>pip install</code> 超时、连接失败。</p>
+      </div>
+
+      <p>国内访问 GitHub 和 PyPI 经常不稳定，需要配置代理或使用镜像：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 设置 Git 代理</span>
+git config --global http.proxy http://127.0.0.1:7890
+git config --global https.proxy http://127.0.0.1:7890
+
+<span class="cm"># 使用国内 PyPI 镜像</span>
+pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
+<span class="cm"># 临时使用代理运行 west</span>
+<span class="kw">export</span> http_proxy=http://127.0.0.1:7890
+<span class="kw">export</span> https_proxy=http://127.0.0.1:7890
+west update</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>提示：</strong>如果你在公司网络环境中，可能还需要配置 Git 的 SSL 证书。运行 <code>git config --global http.sslVerify false</code> 可以临时跳过证书验证，但请注意安全风险，仅建议在内网环境中使用。</p>
+      </blockquote>
+
+      <div class="info-card">
+        <div class="info-card-title">📚 更多帮助</div>
+        <p>如果以上方案都没有解决你的问题，可以前往 <a href="https://docs.zephyrproject.org/latest/develop/getting_started/index.html" target="_blank">Zephyr 官方安装指南</a> 查看最新文档，或在 <a href="https://discord.gg/w4K7dGm" target="_blank">Zephyr Discord 社区</a> 提问。遇到问题不要气馁，搭建环境是最难的一步，跨过去后面就顺畅了！</p>
+      </div>
+
+    </div>
+  </div>
+  <script type="module" src="/assets/js/search-index.js"></script>
+  <script type="module" src="/assets/js/main.js"></script>
+</body>
+</html>

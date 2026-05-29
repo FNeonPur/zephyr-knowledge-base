@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 480" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <defs>
+    <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:0.8"/>
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:0.8"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="480" fill="#0f172a" rx="12"/>
+  <text x="300" y="36" text-anchor="middle" fill="#e2e8f0" font-size="18" font-weight="700">Zephyr RTOS 整体架构</text>
+  <rect x="40" y="56" width="520" height="52" rx="8" fill="#1e3a5f" stroke="#06b6d4" stroke-width="1.5"/>
+  <text x="300" y="88" text-anchor="middle" fill="#06b6d4" font-size="14" font-weight="600">应用层 (Application)</text>
+  <rect x="40" y="120" width="520" height="52" rx="8" fill="#1e3a5f" stroke="#8b5cf6" stroke-width="1.5"/>
+  <text x="300" y="152" text-anchor="middle" fill="#8b5cf6" font-size="14" font-weight="600">服务层 (Services: Shell / Logging / Settings / OTA)</text>
+  <rect x="40" y="184" width="250" height="52" rx="8" fill="#1e3a5f" stroke="#10b981" stroke-width="1.5"/>
+  <text x="165" y="216" text-anchor="middle" fill="#10b981" font-size="14" font-weight="600">网络子系统</text>
+  <rect x="310" y="184" width="250" height="52" rx="8" fill="#1e3a5f" stroke="#10b981" stroke-width="1.5"/>
+  <text x="435" y="216" text-anchor="middle" fill="#10b981" font-size="14" font-weight="600">文件系统</text>
+  <rect x="40" y="248" width="168" height="52" rx="8" fill="#1e3a5f" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="124" y="280" text-anchor="middle" fill="#f59e0b" font-size="14" font-weight="600">蓝牙 BLE</text>
+  <rect x="220" y="248" width="168" height="52" rx="8" fill="#1e3a5f" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="304" y="280" text-anchor="middle" fill="#f59e0b" font-size="14" font-weight="600">Wi-Fi / IP</text>
+  <rect x="400" y="248" width="160" height="52" rx="8" fill="#1e3a5f" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="480" y="280" text-anchor="middle" fill="#f59e0b" font-size="14" font-weight="600">其他协议</text>
+  <rect x="40" y="316" width="520" height="52" rx="8" fill="url(#g1)" stroke="none"/>
+  <text x="300" y="348" text-anchor="middle" fill="#0f172a" font-size="15" font-weight="700">Zephyr 内核 (Kernel: 线程 / 调度 / 同步 / 内存 / 中断)</text>
+  <rect x="40" y="380" width="520" height="52" rx="8" fill="#1e3a5f" stroke="#ef4444" stroke-width="1.5"/>
+  <text x="300" y="412" text-anchor="middle" fill="#ef4444" font-size="14" font-weight="600">设备驱动层 (Drivers: GPIO / I2C / SPI / UART / PWM / ADC)</text>
+  <rect x="40" y="444" width="520" height="28" rx="8" fill="#1e293b" stroke="#64748b" stroke-width="1"/>
+  <text x="300" y="463" text-anchor="middle" fill="#64748b" font-size="12" font-weight="500">硬件 (Hardware: ARM / RISC-V / x86)</text>
+</svg>

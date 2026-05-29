@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>高级特性 - Zephyr RTOS 中文知识库</title>
+  <link rel="stylesheet" href="/assets/css/main.css">
+</head>
+<body>
+  <div class="content-wrapper">
+    <div class="toc"></div>
+    <div class="content">
+      <h1>高级特性</h1>
+      <p class="subtitle">掌握 Zephyr RTOS 的高级能力 —— 电源管理、安全框架、OTA 升级、文件系统、Shell 调试、日志系统、持久化存储、用户空间、模块化与测试框架</p>
+
+      <h2 id="pm">电源管理</h2>
+      <p>电源管理是嵌入式设备的"省电大师"——就像手机不用时会自动息屏、进入休眠一样，Zephyr 的电源管理子系统可以根据系统负载自动将 CPU 和外设切换到低功耗状态，从而延长电池寿命。</p>
+
+      <h3>电源状态</h3>
+      <p>Zephyr 定义了五种电源状态，功耗从高到低排列：</p>
+      <table class="comparison-table">
+        <tr>
+          <th>状态</th>
+          <th>说明</th>
+          <th>唤醒延迟</th>
+          <th>功耗</th>
+        </tr>
+        <tr>
+          <td><strong>Active</strong></td>
+          <td>CPU 全速运行，所有外设可用</td>
+          <td>无</td>
+          <td>最高</td>
+        </tr>
+        <tr>
+          <td><strong>Idle</strong></td>
+          <td>CPU 空闲，等待中断唤醒（WFI）</td>
+          <td>微秒级</td>
+          <td>低</td>
+        </tr>
+        <tr>
+          <td><strong>Suspend</strong></td>
+          <td>CPU 停止，部分外设关闭，RAM 保留</td>
+          <td>毫秒级</td>
+          <td>较低</td>
+        </tr>
+        <tr>
+          <td><strong>Standby</strong></td>
+          <td>深度休眠，仅 RTC 和唤醒逻辑工作</td>
+          <td>秒级</td>
+          <td>极低</td>
+        </tr>
+        <tr>
+          <td><strong>Off</strong></td>
+          <td>系统完全断电，仅靠外部信号重启</td>
+          <td>重启时间</td>
+          <td>近乎零</td>
+        </tr>
+      </table>
+
+      <h3>自动空闲与运行时电源管理</h3>
+      <p>当所有线程都处于阻塞状态时，Zephyr 的空闲线程会自动运行。如果启用了 <code>CONFIG_PM</code>，空闲线程会根据策略自动将系统切换到低功耗状态——这就像办公室没人时自动关灯一样自然。</p>
+      <p><strong>pm_device_runtime</strong> 是设备级的运行时电源管理：当设备不被使用时自动挂起（suspend），需要使用时自动恢复（resume）。开发者只需调用 <code>pm_device_runtime_get()</code> 和 <code>pm_device_runtime_put()</code>，框架会自动处理状态切换。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* prj.conf 中启用电源管理 */</span>
+<span class="cm">/* CONFIG_PM=y                  */</span>
+<span class="cm">/* CONFIG_PM_DEVICE=y           */</span>
+<span class="cm">/* CONFIG_PM_DEVICE_RUNTIME=y   */</span>
+
+<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *sensor = <span class="fn">DEVICE_DT_GET</span>(<span class="macro">DT_NODELABEL</span>(my_sensor));
+
+<span class="cm">/* 使用设备前：请求恢复（自动从低功耗唤醒）*/</span>
+<span class="fn">pm_device_runtime_get</span>(sensor);
+
+<span class="cm">/* 读取传感器数据 */</span>
+<span class="kw">struct</span> <span class="type">sensor_value</span> val;
+<span class="fn">sensor_sample_fetch</span>(sensor);
+<span class="fn">sensor_channel_get</span>(sensor, <span class="macro">SENSOR_CHAN_TEMPERATURE</span>, &amp;val);
+
+<span class="cm">/* 使用完毕：释放设备（自动进入低功耗）*/</span>
+<span class="fn">pm_device_runtime_put</span>(sensor);</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>注意：</strong>电源状态切换有延迟代价。进入 Standby 越深，唤醒越慢。如果你的应用对实时响应要求很高（如电机控制），需要仔细权衡功耗与延迟。可以通过 <code>CONFIG_PM_POLICY_LATENCY</code> 设置可接受的最大延迟，让 PM 策略自动选择最深的合适状态。</p>
+      </blockquote>
+
+      <h2 id="security">安全框架</h2>
+      <p>在物联网时代，安全不再是"锦上添花"，而是"必备基础设施"。Zephyr 的安全框架就像一栋大厦的安保系统——有门禁（安全启动）、有保险柜（加密存储）、有加密电话（TLS 通信），层层防护确保设备不被篡改、数据不被窃取。</p>
+
+      <h3>mbedTLS 与 PSA Crypto API</h3>
+      <p>Zephyr 集成了 <strong>mbedTLS</strong> 作为底层加密库，提供 AES、RSA、ECC、SHA、HMAC 等常用密码学算法。同时，Zephyr 正在向 <strong>PSA Crypto API</strong>（Platform Security Architecture）迁移——这是 ARM 制定的标准化加密接口，让应用代码可以无缝切换后端实现（软件加密 / 硬件加密引擎）。</p>
+
+      <h3>安全启动（Secure Boot）</h3>
+      <p>安全启动就像"出厂封条"——设备上电后，bootloader 会验证固件签名，只有签名正确的固件才能执行。这防止了攻击者刷入恶意固件。Zephyr 通过 MCUboot 实现安全启动（详见下一节）。</p>
+
+      <h3>TLS / DTLS 通信加密</h3>
+      <p>网络通信如果不加密，就像寄明信片——任何人都能偷看内容。TLS（传输层安全）为 TCP 通信加密，DTLS 为 UDP 通信加密。Zephyr 的 <strong>net_tls</strong> 子系统让 socket 编程和 TLS 无缝结合。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">conf</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># prj.conf — 启用安全特性</span>
+
+<span class="cm"># 启用 mbedTLS</span>
+<span class="macro">CONFIG_MBEDTLS=y</span>
+<span class="macro">CONFIG_MBEDTLS_BUILTIN=y</span>
+
+<span class="cm"># 启用 PSA Crypto API</span>
+<span class="macro">CONFIG_PSA_CRYPTO=y</span>
+
+<span class="cm"># 启用 TLS（用于 TCP 通信加密）</span>
+<span class="macro">CONFIG_NET_SOCKETS=y</span>
+<span class="macro">CONFIG_NET_SOCKETS_TLS=y</span>
+<span class="macro">CONFIG_MBEDTLS_TLS_ENABLED=y</span>
+
+<span class="cm"># 安全启动相关</span>
+<span class="macro">CONFIG_BOOTLOADER_MCUBOOT=y</span>
+
+<span class="cm"># 硬件加密引擎（如果芯片支持）</span>
+<span class="macro">CONFIG_CRYPTO=y</span></code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>如果目标芯片有硬件加密引擎（如 STM32 的 CRYP、Nordic 的 CC310），启用硬件加速可以大幅提升加密性能并降低 CPU 占用。通过 PSA Crypto API，应用代码无需修改即可自动使用硬件加速。</p>
+      </blockquote>
+
+      <h2 id="mcuboot">MCUboot 与 OTA 固件升级</h2>
+      <p>OTA（Over-The-Air）升级就像手机系统更新——不需要数据线，通过网络就能给设备刷新固件。MCUboot 是 Zephyr 生态中广泛使用的安全引导加载程序，它负责两件事：<strong>验证固件完整性</strong>和<strong>管理固件升级流程</strong>。</p>
+
+      <h3>MCUboot 核心概念</h3>
+      <ul>
+        <li><strong>镜像格式</strong>：MCUboot 要求固件打包为特定格式（包含头部信息和签名），通过 <code>imgtool</code> 工具签名打包</li>
+        <li><strong>签名验证</strong>：每次启动前，MCUboot 用公钥验证固件签名，确保固件未被篡改</li>
+        <li><strong>Single Bank</strong>：只有一个固件槽，升级时直接覆盖旧固件（风险较高，断电可能变砖）</li>
+        <li><strong>Dual Bank</strong>：有两个固件槽（primary + secondary），新固件先写入 secondary 槽，验证通过后交换启动（安全，断电不影响旧固件）</li>
+      </ul>
+
+      <h3>DFU 传输方式</h3>
+      <p>新固件怎么传到设备上？Zephyr 支持多种传输通道：</p>
+      <ul>
+        <li><strong>BLE</strong>：通过蓝牙低功耗传输，适合无 Wi-Fi 的便携设备</li>
+        <li><strong>UART</strong>：通过串口传输，开发调试阶段最常用</li>
+        <li><strong>USB</strong>：通过 USB 接口传输，速度快</li>
+        <li><strong>Wi-Fi / Ethernet</strong>：通过网络传输，适合已联网的 IoT 设备</li>
+      </ul>
+      <p>这些传输方式都基于 <strong>SMP（Simple Management Protocol）</strong>协议，通过 <strong>mcumgr</strong> 命令行工具管理固件升级过程。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">conf</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># prj.conf — 启用 MCUboot 与 DFU</span>
+
+<span class="macro">CONFIG_BOOTLOADER_MCUBOOT=y</span>
+<span class="macro">CONFIG_IMG_MANAGER=y</span>
+<span class="macro">CONFIG_IMG_ERASE_PROGRESSIVELY=y</span>
+
+<span class="cm"># 启用 SMP 协议（通过 BLE/UART/USB 传输固件）</span>
+<span class="macro">CONFIG_MCUMGR=y</span>
+<span class="macro">CONFIG_MCUMGR_CMD_IMG_MGMT=y</span>
+<span class="macro">CONFIG_MCUMGR_CMD_OS_MGMT=y</span>
+
+<span class="cm"># 通过 UART 传输</span>
+<span class="macro">CONFIG_MCUMGR_TRANSPORT_UART=y</span>
+
+<span class="cm"># 通过 BLE 传输</span>
+<span class="cm"># CONFIG_MCUMGR_TRANSPORT_BT=y</span></code></pre>
+      </div>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* Device Tree 中定义 flash 分区 */</span>
+<span class="cm">/* 通常在 boards/&lt;board&gt;.dts 中已预定义 */</span>
+<span class="cm">/* primary-slot: 当前运行的固件 */</span>
+<span class="cm">/* secondary-slot: 存放待升级的新固件 */</span>
+
+<span class="cm">/* 应用代码：确认当前固件，标记升级成功 */</span>
+<span class="kw">int</span> <span class="fn">confirm_firmware</span>(<span class="kw">void</span>)
+{
+    <span class="kw">if</span> (<span class="fn">boot_is_img_confirmed</span>()) {
+        <span class="fn">printk</span>(<span class="str">"固件已确认，无需重复操作\n"</span>);
+        <span class="kw">return</span> <span class="num">0</span>;
+    }
+
+    <span class="kw">int</span> ret = <span class="fn">boot_write_img_confirmed</span>();
+    <span class="kw">if</span> (ret == <span class="num">0</span>) {
+        <span class="fn">printk</span>(<span class="str">"固件确认成功，升级完成！\n"</span>);
+    } <span class="kw">else</span> {
+        <span class="fn">printk</span>(<span class="str">"固件确认失败: %d\n"</span>, ret);
+    }
+    <span class="kw">return</span> ret;
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>重要：</strong>OTA 升级后，新固件必须主动调用 <code>boot_write_img_confirmed()</code> 确认升级成功。否则 MCUboot 会在下次重启时回滚到旧固件——这是一种安全保护机制，防止新固件无法正常运行导致设备"变砖"。</p>
+      </blockquote>
+
+      <h2 id="fs">文件系统</h2>
+      <p>文件系统让嵌入式设备拥有了"文件柜"——你可以按名字存取数据，不用关心底层 flash 芯片的擦写细节。Zephyr 支持多种文件系统，最常用的是 <strong>LittleFS</strong> 和 <strong>FATFS</strong>。</p>
+
+      <h3>LittleFS —— 嵌入式首选</h3>
+      <p>LittleFS 专为嵌入式 flash 存储设计，就像一个<strong>抗震文件柜</strong>——即使突然断电，文件也不会损坏。它的三大核心优势：</p>
+      <ul>
+        <li><strong>掉电安全</strong>（Power-fail safe）：写入操作是原子性的，断电不会导致文件系统损坏</li>
+        <li><strong>磨损均衡</strong>（Wear leveling）：均匀使用 flash 各个区块，延长 flash 寿命</li>
+        <li><strong>低 RAM 占用</strong>：只需要极少的 RAM 即可运行，适合资源受限的 MCU</li>
+      </ul>
+
+      <h3>FATFS —— SD 卡兼容</h3>
+      <p>FATFS 是经典的 FAT16/FAT32 文件系统实现，最大优势是<strong>与 PC 兼容</strong>——拔出 SD 卡插到电脑上就能直接读取。但 FATFS 不具备掉电安全和磨损均衡能力，适合有 SD 卡插槽的设备。</p>
+
+      <h3>文件操作 API</h3>
+      <p>Zephyr 提供了 POSIX 风格的文件操作 API，和 Linux 上的用法几乎一样：</p>
+      <ul>
+        <li><code>fs_open()</code> — 打开文件</li>
+        <li><code>fs_read()</code> — 读取文件</li>
+        <li><code>fs_write()</code> — 写入文件</li>
+        <li><code>fs_close()</code> — 关闭文件</li>
+        <li><code>fs_unlink()</code> — 删除文件</li>
+        <li><code>fs_mkdir()</code> — 创建目录</li>
+        <li><code>fs_stat()</code> — 获取文件信息</li>
+      </ul>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* prj.conf */</span>
+<span class="cm">/* CONFIG_FILE_SYSTEM=y      */</span>
+<span class="cm">/* CONFIG_FILE_SYSTEM_LITTLEFS=y */</span>
+<span class="cm">/* CONFIG_FLASH=y             */</span>
+<span class="cm">/* CONFIG_FLASH_PAGE_LAYOUT=y */</span>
+
+<span class="macro">#include</span> <span class="str">&lt;zephyr/fs/fs.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/fs/littlefs.h&gt;</span>
+
+<span class="macro">FS_LITTLEFS_DECLARE_DEFAULT_CONFIG</span>(storage);
+
+<span class="kw">static</span> <span class="kw">struct</span> <span class="type">fs_mount_t</span> mount_point = {
+    .type = <span class="macro">FS_LITTLEFS</span>,
+    .fs_data = &amp;storage,
+    .storage_dev = (<span class="kw">void</span> *)<span class="macro">FLASH_AREA_ID</span>(storage),
+    .mnt_point = <span class="str">"/lfs"</span>,
+};
+
+<span class="kw">void</span> <span class="fn">fs_example</span>(<span class="kw">void</span>)
+{
+    <span class="cm">/* 挂载文件系统 */</span>
+    <span class="kw">int</span> ret = <span class="fn">fs_mount</span>(&amp;mount_point);
+    <span class="kw">if</span> (ret &lt; <span class="num">0</span>) {
+        <span class="fn">printk</span>(<span class="str">"挂载失败: %d\n"</span>, ret);
+        <span class="kw">return</span>;
+    }
+
+    <span class="cm">/* 写入文件 */</span>
+    <span class="kw">struct</span> <span class="type">fs_file_t</span> file;
+    <span class="fn">fs_file_t_init</span>(&amp;file);
+    ret = <span class="fn">fs_open</span>(&amp;file, <span class="str">"/lfs/hello.txt"</span>, <span class="macro">FS_O_WRITE</span> | <span class="macro">FS_O_CREATE</span>);
+    <span class="kw">if</span> (ret &gt;= <span class="num">0</span>) {
+        <span class="kw">char</span> *msg = <span class="str">"Hello, LittleFS!"</span>;
+        <span class="fn">fs_write</span>(&amp;file, msg, <span class="fn">strlen</span>(msg));
+        <span class="fn">fs_close</span>(&amp;file);
+    }
+
+    <span class="cm">/* 读取文件 */</span>
+    <span class="fn">fs_file_t_init</span>(&amp;file);
+    ret = <span class="fn">fs_open</span>(&amp;file, <span class="str">"/lfs/hello.txt"</span>, <span class="macro">FS_O_READ</span>);
+    <span class="kw">if</span> (ret &gt;= <span class="num">0</span>) {
+        <span class="kw">char</span> buf[<span class="num">64</span>] = {<span class="num">0</span>};
+        <span class="fn">fs_read</span>(&amp;file, buf, <span class="kw">sizeof</span>(buf));
+        <span class="fn">printk</span>(<span class="str">"读取内容: %s\n"</span>, buf);
+        <span class="fn">fs_close</span>(&amp;file);
+    }
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>flash 分区（partition）需要在 Device Tree 中定义。LittleFS 需要一个独立的 flash 分区来存储文件数据。确保分区大小足够，且不要和固件区域重叠。</p>
+      </blockquote>
+
+      <h2 id="shell">Shell 命令行调试</h2>
+      <p>Shell 就像设备的"远程控制台"——通过串口连接设备后，你可以输入命令查看状态、修改参数、触发操作，就像在 Linux 终端里操作一样。这是嵌入式开发中最实用的调试手段之一。</p>
+
+      <h3>Shell 子系统</h3>
+      <p>Zephyr 的 Shell 子系统提供了完整的命令行框架：命令注册、参数解析、子命令、Tab 自动补全、命令历史等。它支持多种传输后端（UART、RTT、Telnet），最常用的是 UART。</p>
+
+      <h3>自定义命令</h3>
+      <p>通过 <code>SHELL_CMD_REGISTER</code> 宏注册自定义命令，就像给遥控器添加一个新按钮——按下按钮（输入命令），执行对应的操作（回调函数）。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/shell/shell.h&gt;</span>
+
+<span class="cm">/* 命令处理函数 */</span>
+<span class="kw">static</span> <span class="kw">int</span> <span class="fn">cmd_led_on</span>(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">shell</span> *sh, <span class="kw">size_t</span> argc,
+                       <span class="kw">char</span> **argv)
+{
+    <span class="kw">if</span> (argc &gt; <span class="num">1</span>) {
+        <span class="fn">shell_print</span>(sh, <span class="str">"点亮 LED %s"</span>, argv[<span class="num">1</span>]);
+    } <span class="kw">else</span> {
+        <span class="fn">shell_print</span>(sh, <span class="str">"点亮默认 LED"</span>);
+    }
+    <span class="kw">return</span> <span class="num">0</span>;
+}
+
+<span class="kw">static</span> <span class="kw">int</span> <span class="fn">cmd_led_off</span>(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">shell</span> *sh, <span class="kw">size_t</span> argc,
+                        <span class="kw">char</span> **argv)
+{
+    <span class="fn">shell_print</span>(sh, <span class="str">"熄灭 LED"</span>);
+    <span class="kw">return</span> <span class="num">0</span>;
+}
+
+<span class="cm">/* 注册子命令 */</span>
+<span class="macro">SHELL_STATIC_SUBCMD_SET_CREATE</span>(sub_led,
+    <span class="macro">SHELL_CMD</span>(on,  <span class="macro">NULL</span>, <span class="str">"点亮 LED"</span>,  cmd_led_on),
+    <span class="macro">SHELL_CMD</span>(off, <span class="macro">NULL</span>, <span class="str">"熄灭 LED"</span>,  cmd_led_off),
+    <span class="macro">SHELL_SUBCMD_SET_END</span>
+);
+
+<span class="cm">/* 注册顶层命令：led on / led off */</span>
+<span class="macro">SHELL_CMD_REGISTER</span>(led, &amp;sub_led, <span class="str">"LED 控制"</span>, <span class="macro">NULL</span>);</code></pre>
+      </div>
+
+      <p>注册后，在串口终端中输入 <code>led on 1</code> 即可点亮 LED 1，输入 <code>led off</code> 熄灭 LED。Shell 还支持 Tab 衮补全——输入 <code>led </code> 后按 Tab，会自动列出 <code>on</code> 和 <code>off</code> 两个子命令。</p>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>Shell 命令是开发调试的利器，但生产环境中要注意安全——建议通过 <code>CONFIG_SHELL_MINIMAL</code> 或权限控制限制可用命令，避免用户误操作导致设备异常。</p>
+      </blockquote>
+
+      <h2 id="logging">日志系统</h2>
+      <p>日志系统是嵌入式开发的"黑匣子"——它记录程序运行过程中的关键信息，帮助你在出问题时回溯定位。和简单的 <code>printk()</code> 不同，Zephyr 的日志系统支持<strong>分级过滤、模块标识、多种后端输出</strong>，是专业级的日志方案。</p>
+
+      <h3>日志级别</h3>
+      <p>日志按严重程度分为四个级别，就像医院的分诊制度——急症优先处理：</p>
+      <ul>
+        <li><strong>LOG_ERR</strong> — 错误：必须立即处理的严重问题</li>
+        <li><strong>LOG_WRN</strong> — 警告：可能引发问题的异常情况</li>
+        <li><strong>LOG_INF</strong> — 信息：重要的运行状态信息</li>
+        <li><strong>LOG_DBG</strong> — 调试：仅开发阶段需要的详细信息</li>
+      </ul>
+
+      <h3>运行时过滤</h3>
+      <p>日志可以在编译时设置默认级别，也可以在运行时动态调整。比如开发时开启 DBG 级别看所有日志，生产时只保留 ERR 级别。通过 Shell 命令 <code>log level</code> 可以实时调整。</p>
+
+      <h3>日志后端</h3>
+      <p>日志输出到哪里？Zephyr 支持多种后端：</p>
+      <ul>
+        <li><strong>UART</strong>：最常用，通过串口输出到 PC 终端</li>
+        <li><strong>RTT</strong>：SEGGER RTT，速度比 UART 快得多，适合调试器连接时使用</li>
+        <li><strong>自定义后端</strong>：可以将日志写入 flash、发送到网络服务器等</li>
+      </ul>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/logging/log.h&gt;</span>
+
+<span class="cm">/* 注册日志模块，设置模块名和默认级别 */</span>
+<span class="macro">LOG_MODULE_REGISTER</span>(my_app, <span class="macro">LOG_LEVEL_INF</span>);
+
+<span class="kw">void</span> <span class="fn">sensor_task</span>(<span class="kw">void</span>)
+{
+    <span class="macro">LOG_INF</span>(<span class="str">"传感器任务启动"</span>);
+
+    <span class="kw">int</span> ret = <span class="fn">sensor_sample_fetch</span>(sensor_dev);
+    <span class="kw">if</span> (ret &lt; <span class="num">0</span>) {
+        <span class="macro">LOG_ERR</span>(<span class="str">"传感器读取失败: %d"</span>, ret);
+        <span class="kw">return</span>;
+    }
+
+    <span class="kw">struct</span> <span class="type">sensor_value</span> temp;
+    <span class="fn">sensor_channel_get</span>(sensor_dev, <span class="macro">SENSOR_CHAN_TEMPERATURE</span>, &amp;temp);
+
+    <span class="kw">if</span> (temp.val1 &gt; <span class="num">80</span>) {
+        <span class="macro">LOG_WRN</span>(<span class="str">"温度过高: %d.%06d°C"</span>, temp.val1, temp.val2);
+    }
+
+    <span class="macro">LOG_DBG</span>(<span class="str">"温度: %d.%06d°C"</span>, temp.val1, temp.val2);
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>性能提示：</strong>LOG_DBG 宏在编译时如果日志级别不够会被完全消除（零开销），不会占用任何代码空间或运行时间。所以放心地在代码中添加调试日志，生产构建时它们会自动消失。</p>
+      </blockquote>
+
+      <h2 id="settings">Settings 持久化存储</h2>
+      <p>Settings 子系统是设备的"备忘录"——它帮你把配置参数持久化保存到 flash 中，断电不丢失。下次开机时自动加载，就像手机记住你的 Wi-Fi 密码一样方便。</p>
+
+      <h3>键值对存储</h3>
+      <p>Settings 采用<strong>层级键值对</strong>模型，键名用斜杠分隔层级，类似文件路径。比如 <code>net/wifi/ssid</code>、<code>sensor/interval</code>。每个键对应一个值（二进制数据），读写都非常简洁。</p>
+
+      <h3>存储后端</h3>
+      <p>Settings 支持两种 flash 后端：</p>
+      <ul>
+        <li><strong>FCB</strong>（Flash Circular Buffer）：循环写入，适合频繁更新的场景，自动垃圾回收</li>
+        <li><strong>NVS</strong>（Non-Volatile Storage）：名字值存储，API 更简洁，适合一般用途</li>
+      </ul>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/settings/settings.h&gt;</span>
+
+<span class="cm">/* 定义要保存的配置项 */</span>
+<span class="kw">static</span> <span class="kw">int</span> sensor_interval = <span class="num">1000</span>;  <span class="cm">/* 默认 1000ms */</span>
+<span class="kw">static</span> <span class="kw">char</span> device_name[<span class="num">32</span>] = <span class="str">"zephyr-device"</span>;
+
+<span class="cm">/* 加载回调：从 flash 读取值时触发 */</span>
+<span class="kw">static</span> <span class="kw">int</span> <span class="fn">settings_handler</span>(<span class="kw">const</span> <span class="kw">char</span> *key, <span class="kw">size_t</span> len,
+                           <span class="kw">settings_read_cb</span> read_cb,
+                           <span class="kw">void</span> *cb_arg)
+{
+    <span class="kw">if</span> (<span class="fn">strcmp</span>(key, <span class="str">"interval"</span>) == <span class="num">0</span>) {
+        <span class="kw">return</span> <span class="fn">read_cb</span>(cb_arg, &amp;sensor_interval, <span class="kw">sizeof</span>(sensor_interval));
+    }
+    <span class="kw">if</span> (<span class="fn">strcmp</span>(key, <span class="str">"name"</span>) == <span class="num">0</span>) {
+        <span class="kw">return</span> <span class="fn">read_cb</span>(cb_arg, device_name, <span class="kw">sizeof</span>(device_name));
+    }
+    <span class="kw">return</span> -<span class="macro">ENOENT</span>;
+}
+
+<span class="kw">static</span> <span class="kw">struct</span> <span class="type">settings_handler</span> my_conf = {
+    .name = <span class="str">"myapp"</span>,
+    .h_set = settings_handler,
+};
+
+<span class="kw">void</span> <span class="fn">settings_example</span>(<span class="kw">void</span>)
+{
+    <span class="cm">/* 注册 handler */</span>
+    <span class="fn">settings_register</span>(&amp;my_conf);
+    <span class="fn">settings_subsys_init</span>();
+
+    <span class="cm">/* 从 flash 加载所有 myapp/* 配置 */</span>
+    <span class="fn">settings_load</span>();
+
+    <span class="cm">/* 修改并保存配置 */</span>
+    sensor_interval = <span class="num">500</span>;
+    <span class="fn">settings_save_one</span>(<span class="str">"myapp/interval"</span>,
+                      &amp;sensor_interval, <span class="kw">sizeof</span>(sensor_interval));
+
+    <span class="fn">printk</span>(<span class="str">"采集间隔: %dms, 设备名: %s\n"</span>,
+           sensor_interval, device_name);
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>注意：</strong><code>settings_save_one()</code> 每次调用都会触发 flash 写入。如果需要保存多个配置项，建议使用 <code>settings_save()</code> 一次性保存所有修改，减少 flash 写入次数，延长 flash 寿命。</p>
+      </blockquote>
+
+      <h2 id="userspace">用户空间与权限隔离</h2>
+      <p>用户空间就像操作系统的"安全隔离舱"——普通应用程序在隔离舱内运行，无法直接访问内核或其他应用的内存，所有敏感操作必须通过系统调用（syscall）请求内核执行。这就像乘客不能进驾驶舱，只能通过乘务员传话给机长。</p>
+
+      <h3>核心概念</h3>
+      <ul>
+        <li><strong>CONFIG_USERSPACE</strong>：启用用户空间支持，需要硬件有 MPU（Memory Protection Unit）</li>
+        <li><strong>Supervisor 模式</strong>：内核线程运行的模式，可以访问所有内存和硬件</li>
+        <li><strong>User 模式</strong>：应用线程运行的模式，只能访问自己的内存域</li>
+        <li><strong>内存域（Memory Domain）</strong>：一组内存分区（partition）的集合，定义了用户线程可以访问的内存范围</li>
+        <li><strong>系统调用（Syscall）</strong>：用户线程请求内核服务的唯一通道，Zephyr 自动生成 syscall 桩代码</li>
+      </ul>
+
+      <h3>MPU 隔离</h3>
+      <p>MPU 是硬件级别的内存保护单元，可以设置内存区域的访问权限（读/写/执行）。Zephyr 利用 MPU 实现：内核代码和数据对用户线程不可写、每个用户线程只能访问自己的栈和授权的内存分区、设备寄存器只能通过内核 API 访问。</p>
+
+      <blockquote>
+        <p><strong>何时使用？</strong>用户空间主要适用于安全要求高的场景（如 IoT 网关处理不可信数据）。它有性能开销——每次 syscall 都要切换上下文。对于资源受限或对实时性要求极高的场景，不建议开启。</p>
+      </blockquote>
+
+      <h2 id="modules">模块化系统</h2>
+      <p>Zephyr 的模块化系统就像乐高积木的"零件仓库"——你可以从仓库中挑选需要的零件（模块），组装成自己的项目。每个模块是一个独立的外部代码库，通过 west 管理器统一管理版本和依赖。</p>
+
+      <h3>West 模块</h3>
+      <p>West 是 Zephyr 的元工具（meta-tool），它不仅管理 Zephyr 主仓库，还管理所有外部模块。在 <code>west.yml</code> 中声明模块的 Git 仓库地址和版本，<code>west update</code> 就会自动拉取所有模块到正确版本。</p>
+
+      <h3>常用模块</h3>
+      <ul>
+        <li><strong>hal_stm32</strong>：STM32 系列的 HAL 库和 CMSIS 支持</li>
+        <li><strong>mbedtls</strong>：mbedTLS 加密库，提供 TLS 和密码学功能</li>
+        <li><strong>mcuboot</strong>：安全引导加载程序</li>
+        <li><strong>lvgl</strong>：Light and Versatile Graphics Library，GUI 开发</li>
+        <li><strong>nanopb</strong>：Protocol Buffers 的嵌入式实现</li>
+      </ul>
+
+      <h3>自定义模块</h3>
+      <p>你可以将自己的库封装为 Zephyr 模块。只需在模块根目录创建 <code>zephyr/module.yml</code> 文件，声明模块的源码路径和头文件路径（<code>MODULE_INCLUDE</code>），然后在 <code>west.yml</code> 中添加模块引用即可。Zephyr 构建系统会自动发现并集成模块中的源码和 Kconfig 配置。</p>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>模块和 Zephyr 主仓库版本需要匹配。升级 Zephyr 版本时，记得同时运行 <code>west update</code> 更新所有模块到兼容版本，避免 API 不兼容导致的编译错误。</p>
+      </blockquote>
+
+      <h2 id="ztest">Zephyr 测试框架</h2>
+      <p>ztest 是 Zephyr 内置的单元测试框架，就像代码的"体检中心"——你为每个功能编写测试用例，ztest 自动运行所有测试并报告通过/失败。写测试虽然费时间，但它是代码质量的保险：修改代码后跑一遍测试，立刻知道有没有引入回归问题。</p>
+
+      <h3>核心 API</h3>
+      <ul>
+        <li><code>ztest_test_suite()</code> — 定义测试套件（一组相关测试）</li>
+        <li><code>ztest_unit_test()</code> — 注册单元测试用例</li>
+        <li><code>ztest_run_test_suite()</code> — 运行测试套件</li>
+        <li><code>ztest_assert_*</code> — 断言宏，条件不满足时标记测试失败</li>
+        <li><code>setup()</code> / <code>teardown()</code> — 每个测试前后的准备和清理函数</li>
+      </ul>
+
+      <h3>常用断言</h3>
+      <table class="comparison-table">
+        <tr>
+          <th>断言宏</th>
+          <th>说明</th>
+        </tr>
+        <tr>
+          <td><code>zassert_true(cond, msg)</code></td>
+          <td>条件为真</td>
+        </tr>
+        <tr>
+          <td><code>zassert_false(cond, msg)</code></td>
+          <td>条件为假</td>
+        </tr>
+        <tr>
+          <td><code>zassert_equal(a, b, msg)</code></td>
+          <td>a 等于 b</td>
+        </tr>
+        <tr>
+          <td><code>zassert_not_equal(a, b, msg)</code></td>
+          <td>a 不等于 b</td>
+        </tr>
+        <tr>
+          <td><code>zassert_null(ptr, msg)</code></td>
+          <td>指针为 NULL</td>
+        </tr>
+        <tr>
+          <td><code>zassert_not_null(ptr, msg)</code></td>
+          <td>指针不为 NULL</td>
+        </tr>
+        <tr>
+          <td><code>zassert_mem_equal(a, b, size, msg)</code></td>
+          <td>内存内容相等</td>
+        </tr>
+      </table>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/ztest.h&gt;</span>
+
+<span class="cm">/* 被测函数 */</span>
+<span class="kw">static</span> <span class="kw">int</span> <span class="fn">celsius_to_fahrenheit</span>(<span class="kw">int</span> celsius)
+{
+    <span class="kw">return</span> (celsius * <span class="num">9</span> / <span class="num">5</span>) + <span class="num">32</span>;
+}
+
+<span class="cm">/* 测试用例：正常温度转换 */</span>
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">test_celsius_to_fahrenheit</span>(<span class="kw">void</span>)
+{
+    <span class="fn">zassert_equal</span>(<span class="fn">celsius_to_fahrenheit</span>(<span class="num">0</span>), <span class="num">32</span>,
+                  <span class="str">"0°C 应为 32°F"</span>);
+    <span class="fn">zassert_equal</span>(<span class="fn">celsius_to_fahrenheit</span>(<span class="num">100</span>), <span class="num">212</span>,
+                  <span class="str">"100°C 应为 212°F"</span>);
+    <span class="fn">zassert_equal</span>(<span class="fn">celsius_to_fahrenheit</span>(-<span class="num">40</span>), -<span class="num">40</span>,
+                  <span class="str">"-40°C 应为 -40°F"</span>);
+}
+
+<span class="cm">/* 测试用例：边界值 */</span>
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">test_extreme_values</span>(<span class="kw">void</span>)
+{
+    <span class="fn">zassert_true</span>(<span class="fn">celsius_to_fahrenheit</span>(-<span class="num">273</span>) &lt; -<span class="num">400</span>,
+                 <span class="str">"绝对零度附近温度应极低"</span>);
+}
+
+<span class="cm">/* setup：每个测试前执行 */</span>
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">test_setup</span>(<span class="kw">void</span> *fixture)
+{
+    <span class="cm">/* 初始化测试环境 */</span>
+}
+
+<span class="cm">/* teardown：每个测试后执行 */</span>
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">test_teardown</span>(<span class="kw">void</span> *fixture)
+{
+    <span class="cm">/* 清理测试环境 */</span>
+}
+
+<span class="cm">/* 定义并运行测试套件 */</span>
+<span class="macro">ZTEST_SUITE</span>(temperature_tests, <span class="macro">NULL</span>,
+             test_setup, <span class="macro">NULL</span>, <span class="macro">NULL</span>, test_teardown);
+
+<span class="cm">/* 使用 ZTEST 宏简化单个测试用例注册 */</span>
+<span class="macro">ZTEST</span>(temperature_tests, test_celsius_to_fahrenheit)
+{
+    <span class="fn">zassert_equal</span>(<span class="fn">celsius_to_fahrenheit</span>(<span class="num">0</span>), <span class="num">32</span>,
+                  <span class="str">"0°C 应为 32°F"</span>);
+    <span class="fn">zassert_equal</span>(<span class="fn">celsius_to_fahrenheit</span>(<span class="num">100</span>), <span class="num">212</span>,
+                  <span class="str">"100°C 应为 212°F"</span>);
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>运行测试使用 <code>west build -t test</code> 或 <code>twister</code>（Zephyr 的自动化测试运行器）。Twister 可以在多个平台上并行运行测试，生成详细的测试报告。在 CI/CD 流水线中集成 Twister，可以确保每次代码提交都不会引入回归问题。</p>
+      </blockquote>
+
+      <div class="info-card tip-card">
+        <div class="info-card-title">高级特性速查</div>
+        <p>电源管理是省电大师，安全框架是安保系统，MCUboot 是安全门卫，文件系统是抗震文件柜，Shell 是远程控制台，日志是黑匣子，Settings 是备忘录，用户空间是隔离舱，模块是零件仓库，ztest 是体检中心——掌握这十大高级特性，你就拥有了 Zephyr 项目的完整工具箱！</p>
+      </div>
+
+    </div>
+  </div>
+  <script type="module" src="/assets/js/search-index.js"></script>
+  <script type="module" src="/assets/js/main.js"></script>
+</body>
+</html>

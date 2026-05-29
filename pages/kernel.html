@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>内核核心 - Zephyr RTOS 中文知识库</title>
+  <link rel="stylesheet" href="/assets/css/main.css">
+</head>
+<body>
+  <div class="content-wrapper">
+    <div class="toc"></div>
+    <div class="content">
+      <h1>内核核心</h1>
+      <p class="subtitle">深入理解 Zephyr RTOS 内核的核心机制 —— 线程、调度、同步、通信、中断、定时器、内存管理与多核支持</p>
+
+      <h2 id="thread">线程 Thread</h2>
+      <p>线程是 Zephyr 内核最基本的执行单元。你可以把线程想象成一个"工人"——每个工人有自己的工具箱（栈空间）、自己的任务清单（入口函数），以及自己的优先等级（优先级）。Zephyr 中的线程和 FreeRTOS 中的任务（Task）是同一个概念。</p>
+
+      <h3>创建线程的两种方式</h3>
+      <p>Zephyr 提供了两种创建线程的方式：<strong>静态定义</strong>和<strong>动态创建</strong>。静态定义在编译期就分配好所有资源，动态创建则在运行时从堆上分配栈空间。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* 方式一：静态定义（编译期分配，推荐） */</span>
+<span class="macro">K_THREAD_DEFINE</span>(my_thread,       <span class="cm">/* 线程名 */</span>
+                 <span class="num">512</span>,              <span class="cm">/* 栈大小（字节） */</span>
+                 my_thread_entry,   <span class="cm">/* 入口函数 */</span>
+                 <span class="macro">NULL</span>, <span class="macro">NULL</span>, <span class="macro">NULL</span>,  <span class="cm">/* arg1, arg2, arg3 */</span>
+                 <span class="num">5</span>,                 <span class="cm">/* 优先级 */</span>
+                 <span class="num">0</span>,                 <span class="cm">/* 选项 */</span>
+                 <span class="num">0</span>);                <span class="cm">/* 延迟启动(ms)，0=立即 */</span>
+
+<span class="cm">/* 方式二：动态创建（运行时分配） */</span>
+<span class="kw">struct</span> <span class="type">k_thread</span> my_thread_data;
+<span class="type">k_tid_t</span> my_tid;
+
+<span class="macro">K_THREAD_STACK_DEFINE</span>(my_stack, <span class="num">512</span>);
+
+my_tid = <span class="fn">k_thread_create</span>(&amp;my_thread_data, my_stack,
+                       <span class="macro">K_THREAD_STACK_SIZEOF</span>(my_stack),
+                       my_thread_entry,
+                       <span class="macro">NULL</span>, <span class="macro">NULL</span>, <span class="macro">NULL</span>,
+                       <span class="num">5</span>, <span class="num">0</span>, <span class="macro">K_NO_WAIT</span>);
+
+<span class="cm">/* 线程入口函数 */</span>
+<span class="kw">void</span> <span class="fn">my_thread_entry</span>(<span class="kw">void</span> *arg1, <span class="kw">void</span> *arg2, <span class="kw">void</span> *arg3)
+{
+    <span class="kw">while</span> (<span class="num">1</span>) {
+        <span class="fn">printk</span>(<span class="str">"线程运行中...\n"</span>);
+        <span class="fn">k_msleep</span>(<span class="num">1000</span>);
+    }
+}</code></pre>
+      </div>
+
+      <h3>线程优先级</h3>
+      <p>Zephyr 的线程优先级是一个<strong>非负整数，数值越小优先级越高</strong>。这一点和 FreeRTOS 相同，但和 Linux 恰好相反！</p>
+      <ul>
+        <li><strong>优先级 0</strong>：最高优先级，属于协作式线程（Cooperative）</li>
+        <li><strong>优先级 0 ~ CONFIG_COOP_PRIORITIES-1</strong>：协作式线程区域</li>
+        <li><strong>优先级 CONFIG_COOP_PRIORITIES ~ 最低</strong>：抢占式线程区域（Preemptive）</li>
+      </ul>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>协作式线程运行时不会被其他线程抢占，必须主动让出 CPU（调用 <code>k_yield()</code>、<code>k_sleep()</code> 等阻塞函数）。抢占式线程则可以被更高优先级的线程随时打断。协作式线程适合执行关键的、不可被打断的逻辑。</p>
+      </blockquote>
+
+      <h3>线程生命周期管理</h3>
+      <ul>
+        <li><code>k_thread_start()</code> — 启动一个被延迟创建的线程</li>
+        <li><code>k_thread_abort()</code> — 终止一个线程（线程立即停止，资源不回收）</li>
+        <li><code>k_thread_join()</code> — 等待一个线程结束（阻塞调用者）</li>
+        <li><code>k_yield()</code> — 当前线程主动让出 CPU，让同优先级的其他线程运行</li>
+        <li><code>k_sleep(K_MSEC(100))</code> — 当前线程休眠指定时间</li>
+        <li><code>k_wakeup(tid)</code> — 唤醒一个正在休眠的线程</li>
+      </ul>
+
+      <blockquote>
+        <p><strong>注意：</strong>线程栈大小需要仔细斟酌。太小会导致栈溢出（难以调试的崩溃），太大则浪费宝贵的 RAM。可以通过 <code>CONFIG_STACK_GROWS_UP</code> 和栈分析工具 <code>stackanalyze</code> 来辅助判断。</p>
+      </blockquote>
+
+      <h2 id="scheduler">调度器</h2>
+      <p>调度器是内核的"交通指挥员"，它决定哪个线程在什么时候获得 CPU 的使用权。Zephyr 采用<strong>基于优先级的抢占式调度</strong>作为默认策略，同时支持协作式调度和时间片轮转。</p>
+
+      <h3>调度规则</h3>
+      <p>调度器的核心规则非常简单：</p>
+      <ol>
+        <li><strong>最高优先级的就绪线程总是先运行</strong>——没有例外</li>
+        <li>同优先级的就绪线程按时间片轮转（如果开启了时间片）</li>
+        <li>协作式线程运行期间不会被同优先级或更低优先级的线程抢占</li>
+        <li>抢占式线程可以被任何更高优先级的就绪线程抢占</li>
+      </ol>
+
+      <div class="info-card">
+        <div class="info-card-title">调度触发时机</div>
+        <p>调度器并不是一直在"巡视"的，它只在以下时刻才会重新评估谁该运行：</p>
+        <ul>
+          <li>线程主动让出 CPU：<code>k_yield()</code>、<code>k_sleep()</code>、<code>k_sem_take()</code> 等阻塞操作</li>
+          <li>中断服务程序（ISR）退出时</li>
+          <li>线程调用了可能解锁更高优先级线程的操作，如 <code>k_sem_give()</code>、<code>k_mutex_unlock()</code></li>
+          <li>时间片定时器中断触发（如果开启了时间片）</li>
+        </ul>
+      </div>
+
+      <h3>时间片轮转</h3>
+      <p>当多个<strong>同优先级</strong>的抢占式线程同时就绪时，可以通过时间片轮转让它们公平地分享 CPU 时间。通过配置项 <code>CONFIG_TIMESLICING=y</code> 开启，<code>CONFIG_TIMESLICE_SIZE</code> 设置时间片长度（毫秒），<code>CONFIG_TIMESLICE_PRIORITY</code> 设置参与时间片的最低优先级。</p>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>协作式线程不参与时间片轮转。如果一个协作式线程不让出 CPU，同优先级的其他线程就永远得不到运行机会。所以协作式线程的代码要尽量短小精悍，及时调用 <code>k_yield()</code>。</p>
+      </blockquote>
+
+      <h2 id="sync">线程间同步</h2>
+      <p>多个线程协同工作时，需要同步机制来协调执行顺序、保护共享资源。Zephyr 提供了三种核心同步原语：<strong>信号量</strong>、<strong>互斥量</strong>和<strong>条件变量</strong>。</p>
+
+      <h3>信号量 k_sem</h3>
+      <p>信号量就像<strong>前台接待处的钥匙</strong>——前台有 N 把钥匙，每个来访者拿一把进入房间，钥匙用完了后来的来访者就得排队等待。有人归还钥匙，排队的人就能拿到钥匙进入。</p>
+      <ul>
+        <li><strong>二值信号量</strong>（计数上限为 1）：只有一把钥匙，适合简单的"占用/释放"场景</li>
+        <li><strong>计数信号量</strong>（计数上限 > 1）：多把钥匙，适合资源池管理</li>
+      </ul>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="kw">struct</span> <span class="type">k_sem</span> my_sem;
+
+<span class="cm">/* 初始化：初始计数 0，上限 1（二值信号量） */</span>
+<span class="fn">k_sem_init</span>(&amp;my_sem, <span class="num">0</span>, <span class="num">1</span>);
+
+<span class="cm">/* 线程 A：等待信号量（阻塞直到有人 give） */</span>
+<span class="fn">k_sem_take</span>(&amp;my_sem, <span class="macro">K_FOREVER</span>);
+
+<span class="cm">/* 线程 B / ISR：释放信号量 */</span>
+<span class="fn">k_sem_give</span>(&amp;my_sem);</code></pre>
+      </div>
+
+      <h3>互斥量 k_mutex</h3>
+      <p>互斥量就像<strong>会议室的门锁</strong>——谁先锁上门谁就独占会议室，其他人必须等他开锁出来后才能进入。和信号量不同，互斥量强调<strong>所有权</strong>：只有锁的持有者才能解锁。</p>
+      <p>互斥量最重要的特性是<strong>优先级继承</strong>（Priority Inheritance）：当低优先级线程持有锁，高优先级线程在等锁时，低优先级线程会临时"继承"高优先级，避免优先级反转问题。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="kw">struct</span> <span class="type">k_mutex</span> my_mutex;
+
+<span class="fn">k_mutex_init</span>(&amp;my_mutex);
+
+<span class="cm">/* 加锁 — 获得独占访问权 */</span>
+<span class="fn">k_mutex_lock</span>(&amp;my_mutex, <span class="macro">K_FOREVER</span>);
+
+<span class="cm">/* 临界区：安全地操作共享资源 */</span>
+shared_counter++;
+
+<span class="cm">/* 解锁 — 释放独占访问权 */</span>
+<span class="fn">k_mutex_unlock</span>(&amp;my_mutex);</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>重要：</strong>不要在 ISR 中使用互斥量！ISR 不能阻塞等待，而 <code>k_mutex_lock()</code> 可能阻塞。信号量则可以在 ISR 中使用 <code>k_sem_give()</code>。</p>
+      </blockquote>
+
+      <h3>条件变量 k_condvar</h3>
+      <p>条件变量就像<strong>医院的叫号系统</strong>——病人在等候区等待叫号（<code>k_condvar_wait()</code>），医生看完一个病人后按下叫号器（<code>k_condvar_signal()</code>），通知下一个病人进来。如果一次叫所有等候的病人，那就是 <code>k_condvar_broadcast()</code>。</p>
+      <p>条件变量必须和互斥量配合使用：等待时自动释放互斥量，被唤醒时重新获取互斥量。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="kw">struct</span> <span class="type">k_mutex</span> data_mutex;
+<span class="kw">struct</span> <span class="type">k_condvar</span> data_condvar;
+<span class="kw">bool</span> data_ready = <span class="kw">false</span>;
+
+<span class="cm">/* 消费者线程：等待数据就绪 */</span>
+<span class="fn">k_mutex_lock</span>(&amp;data_mutex, <span class="macro">K_FOREVER</span>);
+<span class="kw">while</span> (!data_ready) {
+    <span class="fn">k_condvar_wait</span>(&amp;data_condvar, &amp;data_mutex, <span class="macro">K_FOREVER</span>);
+}
+<span class="cm">/* 数据已就绪，处理数据 */</span>
+process_data();
+<span class="fn">k_mutex_unlock</span>(&amp;data_mutex);
+
+<span class="cm">/* 生产者线程：产生数据后通知 */</span>
+<span class="fn">k_mutex_lock</span>(&amp;data_mutex, <span class="macro">K_FOREVER</span>);
+produce_data();
+data_ready = <span class="kw">true</span>;
+<span class="fn">k_condvar_signal</span>(&amp;data_condvar);
+<span class="fn">k_mutex_unlock</span>(&amp;data_mutex);</code></pre>
+      </div>
+
+      <h2 id="ipc">线程间通信</h2>
+      <p>同步解决的是"谁先谁后"的问题，通信解决的是"传递数据"的问题。Zephyr 提供了三种 IPC 机制：<strong>消息队列</strong>、<strong>管道</strong>和<strong>邮箱</strong>。</p>
+
+      <h3>消息队列 k_msgq</h3>
+      <p>消息队列就像<strong>公司的信箱</strong>——每个人往信箱里投信（<code>k_msgq_put()</code>），收信人从信箱取信（<code>k_msgq_get()</code>）。每封信的大小是固定的，信箱容量也是固定的。信箱满了再投信就得排队，信箱空了取信也得等待。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="kw">struct</span> <span class="type">k_msgq</span> my_msgq;
+
+<span class="cm">/* 定义消息结构（固定大小） */</span>
+<span class="kw">struct</span> sensor_data {
+    <span class="kw">int</span> temperature;
+    <span class="kw">int</span> humidity;
+};
+
+<span class="cm">/* 初始化消息队列：最多 8 条消息 */</span>
+<span class="macro">K_MSGQ_DEFINE</span>(my_msgq, <span class="kw">sizeof</span>(<span class="kw">struct</span> sensor_data), <span class="num">8</span>, <span class="num">4</span>);
+
+<span class="cm">/* 发送端 */</span>
+<span class="kw">struct</span> sensor_data data = {
+    .temperature = <span class="num">25</span>,
+    .humidity = <span class="num">60</span>
+};
+<span class="fn">k_msgq_put</span>(&amp;my_msgq, &amp;data, <span class="macro">K_NO_WAIT</span>);
+
+<span class="cm">/* 接收端 */</span>
+<span class="kw">struct</span> sensor_data received;
+<span class="fn">k_msgq_get</span>(&amp;my_msgq, &amp;received, <span class="macro">K_FOREVER</span>);
+<span class="fn">printk</span>(<span class="str">"温度: %d, 湿度: %d\n"</span>, received.temperature, received.humidity);</code></pre>
+      </div>
+
+      <h3>管道 k_pipe</h3>
+      <p>管道就像<strong>水管</strong>——数据像水一样从一端流入，从另一端流出。和消息队列不同，管道传输的是<strong>字节流</strong>，没有消息边界。一次可以写入或读取任意长度的数据，适合流式数据传输。</p>
+      <ul>
+        <li><code>k_pipe_put()</code> — 向管道写入数据</li>
+        <li><code>k_pipe_get()</code> — 从管道读取数据</li>
+        <li>支持部分读写：一次操作可能只传输了部分数据</li>
+      </ul>
+
+      <h3>邮箱 k_mbox</h3>
+      <p>邮箱是增强版的消息队列，支持<strong>同步和异步</strong>两种发送方式，消息可以携带可选的发送者信息，接收者可以选择性地接收特定发送者的消息。适合需要更灵活消息路由的场景。</p>
+
+      <table class="comparison-table">
+        <tr>
+          <th>特性</th>
+          <th>k_msgq 消息队列</th>
+          <th>k_pipe 管道</th>
+          <th>k_mbox 邮箱</th>
+        </tr>
+        <tr>
+          <td>数据格式</td>
+          <td>固定大小消息</td>
+          <td>字节流</td>
+          <td>变长消息 + 元数据</td>
+        </tr>
+        <tr>
+          <td>消息边界</td>
+          <td>有</td>
+          <td>无</td>
+          <td>有</td>
+        </tr>
+        <tr>
+          <td>发送方式</td>
+          <td>同步</td>
+          <td>同步</td>
+          <td>同步 + 异步</td>
+        </tr>
+        <tr>
+          <td>适用场景</td>
+          <td>结构化数据传递</td>
+          <td>流式数据传输</td>
+          <td>灵活消息路由</td>
+        </tr>
+      </table>
+
+      <h2 id="interrupt">中断管理</h2>
+      <p>中断是嵌入式系统的"紧急电话"——当外部事件发生时（按键按下、数据到达、定时器到期），硬件会打断当前正在执行的代码，跳转到中断服务程序（ISR）进行处理。中断的优先级高于任何线程。</p>
+
+      <h3>ISR 基础</h3>
+      <p>ISR（Interrupt Service Routine）是中断发生时执行的函数。ISR 的核心原则是<strong>快进快出</strong>——在 ISR 中只做最紧急的处理，耗时操作推迟到线程中完成。这就像急诊分诊：ISR 只做止血包扎，手术交给手术室（线程）。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* 定义 ISR */</span>
+<span class="kw">void</span> <span class="fn">my_isr</span>(<span class="kw">const</span> <span class="kw">void</span> *device)
+{
+    <span class="cm">/* 只做最紧急的操作 */</span>
+    <span class="kw">uint32_t</span> status = <span class="fn">read_status_reg</span>();
+
+    <span class="kw">if</span> (status &amp; <span class="macro">RX_READY</span>) {
+        <span class="cm">/* 读取数据，提交延迟处理 */</span>
+        <span class="fn">k_work_submit</span>(&amp;rx_work);
+    }
+}
+
+<span class="cm">/* 连接中断：将 IRQ 23 绑定到 my_isr */</span>
+<span class="macro">IRQ_CONNECT</span>(<span class="num">23</span>,            <span class="cm">/* IRQ 编号 */</span>
+             <span class="num">0</span>,              <span class="cm">/* 中断优先级 */</span>
+             my_isr,          <span class="cm">/* ISR 函数 */</span>
+             <span class="macro">NULL</span>,            <span class="cm">/* ISR 参数 */</span>
+             <span class="num">0</span>);             <span class="cm">/* flags */</span>
+
+<span class="cm">/* 使能中断 */</span>
+<span class="fn">irq_enable</span>(<span class="num">23</span>);</code></pre>
+      </div>
+
+      <h3>中断优先级</h3>
+      <p>中断优先级和线程优先级是<strong>两个独立的体系</strong>。数值越小，中断优先级越高（和线程优先级方向一致）。高优先级中断可以抢占低优先级中断，形成中断嵌套。通过 <code>CONFIG_IRQ_OFFLOAD</code> 可以将中断处理卸载到线程上下文。</p>
+
+      <h3>延迟处理模式（Bottom-Half）</h3>
+      <p>中断处理分为"上半部"（Top-Half）和"下半部"（Bottom-Half）：</p>
+      <ul>
+        <li><strong>上半部（ISR 中）</strong>：关中断状态下执行，只做最紧急的硬件操作（读取数据、清除标志、提交工作）</li>
+        <li><strong>下半部（线程中）</strong>：开中断状态下执行，做耗时的数据处理、协议解析等</li>
+      </ul>
+      <p>Zephyr 中实现下半部的标准方式就是<strong>工作队列</strong>（见下文 #workqueue 章节）。</p>
+
+      <blockquote>
+        <p><strong>ISR 中的限制：</strong>ISR 中不能调用任何可能阻塞的内核 API（如 <code>k_mutex_lock()</code>、<code>k_msgq_get()</code> 带 K_FOREVER），不能使用 <code>k_sleep()</code>，不能分配内存。可以使用 <code>k_sem_give()</code>、<code>k_work_submit()</code>、<code>k_msgq_put()</code> 带 K_NO_WAIT 等非阻塞 API。</p>
+      </blockquote>
+
+      <h2 id="timer">定时器</h2>
+      <p>定时器是嵌入式开发的"闹钟"——你需要定时执行某个操作、周期性检查某个状态、或者测量时间间隔，都离不开定时器。Zephyr 提供了系统时钟、内核定时器和多种等待/延时 API。</p>
+
+      <h3>系统时钟</h3>
+      <p>Zephyr 内核维护一个系统时钟（System Clock），通过 <code>k_uptime_get()</code> 获取自系统启动以来的微秒数。这是所有时间相关功能的基础。</p>
+
+      <h3>k_timer 内核定时器</h3>
+      <p><code>k_timer</code> 是内核提供的高层定时器，支持单次触发和周期触发。你可以把它想象成一个<strong>可编程闹钟</strong>——设定好时间后，到点就会调用你的回调函数。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="kw">struct</span> <span class="type">k_timer</span> my_timer;
+<span class="kw">volatile</span> <span class="kw">int</span> timer_count = <span class="num">0</span>;
+
+<span class="cm">/* 定时器到期回调（在 ISR 上下文中执行！）*/</span>
+<span class="kw">void</span> <span class="fn">timer_expiry_fn</span>(<span class="kw">struct</span> <span class="type">k_timer</span> *timer)
+{
+    timer_count++;
+}
+
+<span class="cm">/* 定时器停止回调（在线程上下文中执行）*/</span>
+<span class="kw">void</span> <span class="fn">timer_stop_fn</span>(<span class="kw">struct</span> <span class="type">k_timer</span> *timer)
+{
+    <span class="fn">printk</span>(<span class="str">"定时器已停止，共触发 %d 次\n"</span>, timer_count);
+}
+
+<span class="cm">/* 初始化并启动定时器 */</span>
+<span class="fn">k_timer_init</span>(&amp;my_timer, timer_expiry_fn, timer_stop_fn);
+<span class="fn">k_timer_start</span>(&amp;my_timer, <span class="macro">K_MSEC</span>(<span class="num">100</span>),   <span class="cm">/* 首次到期时间 */</span>
+                        <span class="macro">K_MSEC</span>(<span class="num">500</span>));   <span class="cm">/* 周期时间 */</span>
+
+<span class="cm">/* 查询定时器已触发次数 */</span>
+<span class="type">uint32_t</span> count = <span class="fn">k_timer_status_get</span>(&amp;my_timer);
+
+<span class="cm">/* 停止定时器 */</span>
+<span class="fn">k_timer_stop</span>(&amp;my_timer);</code></pre>
+      </div>
+
+      <h3>延时与等待 API</h3>
+      <table class="comparison-table">
+        <tr>
+          <th>API</th>
+          <th>说明</th>
+          <th>上下文</th>
+        </tr>
+        <tr>
+          <td><code>k_msleep(ms)</code></td>
+          <td>休眠指定毫秒，让出 CPU</td>
+          <td>线程</td>
+        </tr>
+        <tr>
+          <td><code>k_usleep(us)</code></td>
+          <td>休眠指定微秒，让出 CPU</td>
+          <td>线程</td>
+        </tr>
+        <tr>
+          <td><code>k_sleep(timeout)</code></td>
+          <td>通用休眠，接受 K_MSEC/K_SECONDS 等</td>
+          <td>线程</td>
+        </tr>
+        <tr>
+          <td><code>k_busy_wait(us)</code></td>
+          <td>忙等待（死循环），不让出 CPU</td>
+          <td>线程/ISR</td>
+        </tr>
+        <tr>
+          <td><code>k_yield()</code></td>
+          <td>让出 CPU，让同优先级线程运行</td>
+          <td>线程</td>
+        </tr>
+      </table>
+
+      <h3>超时模式</h3>
+      <p>Zephyr 中几乎所有阻塞 API 都接受一个超时参数，常用的超时宏有：</p>
+      <ul>
+        <li><code>K_FOREVER</code> — 永远等待，直到操作完成</li>
+        <li><code>K_NO_WAIT</code> — 不等待，立即返回（非阻塞）</li>
+        <li><code>K_MSEC(n)</code> — 等待最多 n 毫秒</li>
+        <li><code>K_SECONDS(n)</code> — 等待最多 n 秒</li>
+        <li><code>K_MINUTES(n)</code> — 等待最多 n 分钟</li>
+        <li><code>K_HOURS(n)</code> — 等待最多 n 小时</li>
+      </ul>
+
+      <h2 id="memory">内存管理</h2>
+      <p>嵌入式系统的内存是稀缺资源，Zephyr 提供了多种内存管理方案来满足不同场景的需求。选择合适的内存管理策略，就像选择合适的收纳方式——固定大小的格子用抽屉（k_mem_slab），不规则大小的东西用储物箱（k_heap）。</p>
+
+      <h3>k_heap 堆内存</h3>
+      <p><code>k_heap</code> 提供类似 malloc/free 的<strong>变长内存分配</strong>，适合分配大小不确定的内存块。每个 k_heap 有自己独立的堆区域，避免了全局堆的碎片化问题。</p>
+
+      <h3>k_mem_slab 内存块分配器</h3>
+      <p><code>k_mem_slab</code> 就像一个<strong>冰格</strong>——所有格子大小完全一样，每个格子只能装固定大小的东西。分配和释放都是 O(1) 操作，不会产生内存碎片，非常适合分配固定大小的控制块、缓冲区等。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* k_heap 示例 */</span>
+<span class="kw">struct</span> <span class="type">k_heap</span> my_heap;
+<span class="macro">K_HEAP_DEFINE</span>(my_heap, <span class="num">4096</span>);  <span class="cm">/* 4KB 堆空间 */</span>
+
+<span class="kw">void</span> *ptr = <span class="fn">k_heap_alloc</span>(&amp;my_heap, <span class="num">128</span>, <span class="macro">K_FOREVER</span>);
+<span class="kw">if</span> (ptr != <span class="macro">NULL</span>) {
+    <span class="fn">memset</span>(ptr, <span class="num">0</span>, <span class="num">128</span>);
+    <span class="cm">/* 使用内存... */</span>
+    <span class="fn">k_heap_free</span>(&amp;my_heap, ptr);
+}
+
+<span class="cm">/* k_mem_slab 示例 */</span>
+<span class="kw">struct</span> <span class="type">k_mem_slab</span> my_slab;
+
+<span class="macro">K_MEM_SLAB_DEFINE</span>(my_slab,     <span class="cm">/* 名称 */</span>
+                   <span class="num">64</span>,          <span class="cm">/* 每个块大小 */</span>
+                   <span class="num">16</span>,          <span class="cm">/* 块数量 */</span>
+                   <span class="num">4</span>);          <span class="cm">/* 对齐字节数 */</span>
+
+<span class="kw">void</span> *block;
+<span class="kw">if</span> (<span class="fn">k_mem_slab_alloc</span>(&amp;my_slab, &amp;block, <span class="macro">K_NO_WAIT</span>) == <span class="num">0</span>) {
+    <span class="cm">/* 成功获取一个 64 字节的块 */</span>
+    <span class="fn">k_mem_slab_free</span>(&amp;my_slab, block);
+}</code></pre>
+      </div>
+
+      <h3>内存保护</h3>
+      <p>在支持 MPU（Memory Protection Unit）或 MMU（Memory Management Unit）的硬件上，Zephyr 可以实现内存保护：</p>
+      <ul>
+        <li><strong>栈溢出检测</strong>：通过 <code>CONFIG_STACK_CANARIES</code> 在栈底放置哨兵值，检测栈溢出</li>
+        <li><strong>MPU 内存保护</strong>：通过 <code>CONFIG_MEMORY_PROTECTION</code> 开启，防止线程越界访问</li>
+        <li><strong>用户模式隔离</strong>：通过 <code>CONFIG_USERSPACE</code> 开启，用户态线程只能访问自己的内存区域，内核空间完全隔离</li>
+      </ul>
+
+      <blockquote>
+        <p><strong>注意：</strong><code>k_mem_pool</code> 已在 Zephyr 3.5 中废弃，请使用 <code>k_heap</code> 替代。栈对齐要求通常为 4 字节或 8 字节，使用 <code>K_THREAD_STACK_DEFINE</code> 宏可以自动处理对齐。</p>
+      </blockquote>
+
+      <h2 id="workqueue">工作队列</h2>
+      <p>工作队列是中断下半部处理的<strong>标准方案</strong>。你可以把工作队列想象成一个<strong>待办事项清单</strong>——ISR 只需往清单上贴一张便签（提交工作），然后立刻返回。工作线程会按照清单逐个处理这些事项，处理过程在线程上下文中执行，可以使用所有内核 API。</p>
+
+      <h3>为什么用工作队列而不是直接在 ISR 中处理？</h3>
+      <ul>
+        <li>ISR 执行期间会屏蔽其他中断，长时间 ISR 会影响系统实时性</li>
+        <li>ISR 中不能使用阻塞 API（互斥量、信号量等待等）</li>
+        <li>工作队列在线程上下文执行，可以使用完整的内核 API</li>
+        <li>工作队列自动管理调度，无需手动创建线程</li>
+      </ul>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* 定义工作项 */</span>
+<span class="kw">struct</span> <span class="type">k_work</span> rx_work;
+
+<span class="cm">/* 工作处理函数（在线程上下文执行）*/</span>
+<span class="kw">void</span> <span class="fn">rx_work_handler</span>(<span class="kw">struct</span> <span class="type">k_work</span> *work)
+{
+    <span class="cm">/* 可以安全地使用阻塞 API */</span>
+    <span class="fn">k_mutex_lock</span>(&amp;data_mutex, <span class="macro">K_FOREVER</span>);
+    process_rx_data();
+    <span class="fn">k_mutex_unlock</span>(&amp;data_mutex);
+}
+
+<span class="cm">/* 初始化工作项 */</span>
+<span class="fn">k_work_init</span>(&amp;rx_work, rx_work_handler);
+
+<span class="cm">/* 在 ISR 中提交工作到系统工作队列 */</span>
+<span class="kw">void</span> <span class="fn">uart_isr</span>(<span class="kw">const</span> <span class="kw">void</span> *dev)
+{
+    <span class="cm">/* 快速读取硬件数据 */</span>
+    <span class="fn">read_hw_fifo</span>();
+    <span class="cm">/* 提交延迟处理，立即返回 */</span>
+    <span class="fn">k_work_submit</span>(&amp;rx_work);
+}
+
+<span class="cm">/* 延迟工作：5 秒后执行 */</span>
+<span class="kw">struct</span> <span class="type">k_delayed_work</span> periodic_work;
+<span class="fn">k_delayed_work_init</span>(&amp;periodic_work, periodic_handler);
+<span class="fn">k_delayed_work_submit</span>(&amp;periodic_work, <span class="macro">K_SECONDS</span>(<span class="num">5</span>));</code></pre>
+      </div>
+
+      <h3>系统工作队列 vs 自定义工作队列</h3>
+      <p>Zephyr 提供一个默认的<strong>系统工作队列</strong>（<code>k_sys_work_q</code>），优先级为 <code>CONFIG_SYSTEM_WORKQUEUE_PRIORITY</code>（默认 -1 即较高优先级）。大多数场景直接使用系统工作队列即可。如果需要不同优先级或隔离处理，可以创建自定义工作队列：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">K_THREAD_STACK_DEFINE</span>(my_work_q_stack, <span class="num">1024</span>);
+<span class="kw">struct</span> <span class="type">k_work_queue</span> my_work_q;
+
+<span class="fn">k_work_queue_start</span>(&amp;my_work_q, my_work_q_stack,
+                     <span class="macro">K_THREAD_STACK_SIZEOF</span>(my_work_q_stack),
+                     <span class="num">7</span>, <span class="cm">/* 优先级 */</span>
+                     <span class="macro">NULL</span>);
+
+<span class="cm">/* 提交到自定义工作队列 */</span>
+<span class="fn">k_work_submit_to_queue</span>(&amp;my_work_q, &amp;rx_work);</code></pre>
+      </div>
+
+      <h2 id="smp">SMP 多核支持</h2>
+      <p>随着多核 MCU 的普及（如 NXP i.MX RT1170、ESP32 双核），Zephyr 也提供了 SMP（Symmetric Multi-Processing）支持，让多个 CPU 核心可以同时运行不同的线程。</p>
+
+      <h3>启用 SMP</h3>
+      <p>通过配置项 <code>CONFIG_SMP=y</code> 启用 SMP 支持，<code>CONFIG_MP_MAX_NUM_CPUS</code> 设置最大 CPU 核心数。启用后，调度器会自动在多个核心间分配线程。</p>
+
+      <h3>线程亲和性</h3>
+      <p>默认情况下，线程可以在任何 CPU 核心上运行。但有时你需要将线程"钉"在某个核心上——比如让中断处理线程固定在处理该中断的 CPU 上。这时可以使用线程亲和性 API：</p>
+      <ul>
+        <li><code>k_thread_cpu_pin(tid, cpu_id)</code> — 将线程固定到指定 CPU</li>
+        <li><code>k_thread_cpu_mask_clear(tid)</code> — 清除所有 CPU 亲和性</li>
+        <li><code>k_thread_cpu_mask_enable(tid, cpu_id)</code> — 允许线程在指定 CPU 运行</li>
+      </ul>
+
+      <h3>负载均衡</h3>
+      <p>Zephyr 的 SMP 调度器会自动进行负载均衡：当一个 CPU 上的线程全部阻塞时，调度器会从其他 CPU 的就绪队列中"拉"线程过来执行。这种工作窃取（Work Stealing）策略确保了多核利用率。</p>
+
+      <h3>Per-CPU 数据</h3>
+      <p>在 SMP 系统中，每个 CPU 核心都有自己的私有数据，如当前线程指针、中断嵌套计数等。Zephyr 通过 <code>CONFIG_SMP</code> 自动处理 per-CPU 数据的隔离，开发者通常不需要关心这些细节。</p>
+
+      <blockquote>
+        <p><strong>何时使用 SMP？</strong>并非所有场景都适合 SMP。如果你的应用对实时性要求极高，SMP 带来的锁竞争和缓存一致性开销可能反而降低性能。SMP 最适合的场景是：多个独立的、可并行执行的任务（如一个核跑通信协议栈，另一个核跑传感器采集和算法处理）。对于简单的单任务场景，单核配置更高效。</p>
+      </blockquote>
+
+      <div class="info-card tip-card">
+        <div class="info-card-title">内核核心知识速查</div>
+        <p>线程是执行单元，调度器是交通指挥，信号量是前台钥匙，互斥量是会议室门锁，消息队列是信箱，工作队列是待办清单——理解了这些类比，你就掌握了 Zephyr 内核的核心设计思想！</p>
+      </div>
+
+    </div>
+  </div>
+  <script type="module" src="/assets/js/search-index.js"></script>
+  <script type="module" src="/assets/js/main.js"></script>
+</body>
+</html>

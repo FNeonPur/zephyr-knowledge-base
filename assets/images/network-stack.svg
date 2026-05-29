@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 440" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <rect width="600" height="440" fill="#0f172a" rx="12"/>
+  <text x="300" y="36" text-anchor="middle" fill="#e2e8f0" font-size="18" font-weight="700">网络协议栈分层架构</text>
+  <rect x="40" y="56" width="520" height="44" rx="8" fill="#1e3a5f" stroke="#06b6d4" stroke-width="1.5"/>
+  <text x="300" y="84" text-anchor="middle" fill="#06b6d4" font-size="14" font-weight="600">应用协议 (MQTT / CoAP / HTTP / LwM2M)</text>
+  <rect x="40" y="112" width="520" height="44" rx="8" fill="#1e3a5f" stroke="#8b5cf6" stroke-width="1.5"/>
+  <text x="300" y="140" text-anchor="middle" fill="#8b5cf6" font-size="14" font-weight="600">传输层 (TCP / UDP / TLS / DTLS)</text>
+  <rect x="40" y="168" width="520" height="44" rx="8" fill="#1e3a5f" stroke="#10b981" stroke-width="1.5"/>
+  <text x="300" y="196" text-anchor="middle" fill="#10b981" font-size="14" font-weight="600">网络层 (IPv4 / IPv6 / ICMPv4 / ICMPv6 / NDP)</text>
+  <rect x="40" y="224" width="520" height="44" rx="8" fill="#1e3a5f" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="300" y="252" text-anchor="middle" fill="#f59e0b" font-size="14" font-weight="600">L2 层 (Ethernet / IEEE 802.15.4 / BLE IPSP)</text>
+  <rect x="40" y="280" width="520" height="44" rx="8" fill="#1e3a5f" stroke="#ef4444" stroke-width="1.5"/>
+  <text x="300" y="308" text-anchor="middle" fill="#ef4444" font-size="14" font-weight="600">硬件驱动 (Wi-Fi / Ethernet / BLE / IEEE 802.15.4)</text>
+  <text x="300" y="356" text-anchor="middle" fill="#94a3b8" font-size="13">核心数据结构</text>
+  <rect x="60" y="370" width="140" height="36" rx="6" fill="#1e3a5f" stroke="#06b6d4" stroke-width="1"/>
+  <text x="130" y="393" text-anchor="middle" fill="#06b6d4" font-size="12" font-weight="600">net_if 接口</text>
+  <rect x="230" y="370" width="140" height="36" rx="6" fill="#1e3a5f" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="300" y="393" text-anchor="middle" fill="#8b5cf6" font-size="12" font-weight="600">net_pkt 数据包</text>
+  <rect x="400" y="370" width="140" height="36" rx="6" fill="#1e3a5f" stroke="#10b981" stroke-width="1"/>
+  <text x="470" y="393" text-anchor="middle" fill="#10b981" font-size="12" font-weight="600">net_context</text>
+  <text x="300" y="430" text-anchor="middle" fill="#64748b" font-size="11">Zephyr 网络栈基于 BSD Socket API，支持 POSIX 兼容的 zsock_ 接口</text>
+</svg>

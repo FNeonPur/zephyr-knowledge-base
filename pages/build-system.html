@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>构建系统与配置 - Zephyr RTOS 中文知识库</title>
+  <link rel="stylesheet" href="/assets/css/main.css">
+</head>
+<body>
+  <div class="content-wrapper">
+    <div class="toc"></div>
+    <div class="content">
+      <h1>构建系统与配置</h1>
+      <p class="subtitle">掌握 West、CMake、Kconfig 和设备树，驾驭 Zephyr 的完整构建流程</p>
+
+      <h2 id="west">West 多仓库管理工具</h2>
+
+      <h3>West 是什么？</h3>
+      <p><strong>West</strong> 是 Zephyr 官方的多仓库管理工具，你可以把它理解为"更聪明的 git submodule"。传统的 git submodule 在处理多个仓库的依赖关系时非常笨拙——更新麻烦、冲突频发、分支管理混乱。而 West 通过一个中心化的 manifest 文件来统一管理所有仓库的版本和路径，让多仓库协作变得井井有条。</p>
+      <p>West 的名字来源于 Zephyr 项目所在地——美国西风岭（Westerly），它也是 Python 包，通过 pip 安装：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="fn">pip</span> install west</code></pre>
+      </div>
+
+      <h3>West 工作区结构</h3>
+      <p>使用 West 初始化后的工作区（workspace）结构如下：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">text</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code>my-workspace/
+├── .west/                  <span class="cm"># West 管理目录</span>
+│   └── config              <span class="cm"># West 配置文件</span>
+├── zephyr/                 <span class="cm"># Zephyr 主仓库（manifest-repo）</span>
+│   ├── west.yml            <span class="cm"># 核心清单文件</span>
+│   ├── boards/             <span class="cm"># 开发板定义</span>
+│   └── ...
+├── modules/                <span class="cm"># 外部模块</span>
+│   ├── hal/                <span class="cm"># 硬件抽象层</span>
+│   ├── crypto/             <span class="cm"># 加密库</span>
+│   └── ...
+└── application/            <span class="cm"># 你的应用代码</span></code></pre>
+      </div>
+
+      <h3>west.yml 清单文件</h3>
+      <p><strong>west.yml</strong> 是整个工作区的"蓝图"，它定义了需要拉取哪些仓库、从哪里拉取、拉取哪个版本。来看一个典型的 west.yml：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">yaml</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># west.yml - Zephyr 项目的清单文件</span>
+<span class="kw">manifest:</span>
+  <span class="kw">remotes:</span>
+    <span class="kw">- name:</span> <span class="str">zephyrproject-rtos</span>
+      <span class="kw">url-base:</span> <span class="str">https://github.com/zephyrproject-rtos</span>
+    <span class="kw">- name:</span> <span class="str">my-company</span>
+      <span class="kw">url-base:</span> <span class="str">https://github.com/my-company</span>
+
+  <span class="kw">projects:</span>
+    <span class="kw">- name:</span> <span class="str">hal_stm32</span>
+      <span class="kw">revision:</span> <span class="str">main</span>
+      <span class="kw">remote:</span> <span class="str">zephyrproject-rtos</span>
+      <span class="kw">path:</span> <span class="str">modules/hal/stm32</span>
+
+    <span class="kw">- name:</span> <span class="str">my-driver</span>
+      <span class="kw">revision:</span> <span class="str">v2.1.0</span>
+      <span class="kw">remote:</span> <span class="str">my-company</span>
+      <span class="kw">path:</span> <span class="str">modules/my-driver</span>
+
+  <span class="kw">self:</span>
+    <span class="kw">path:</span> <span class="str">zephyr</span></code></pre>
+      </div>
+
+      <p>关键概念：</p>
+      <ul>
+        <li><strong>remotes</strong>：定义远程仓库的 URL 前缀，类似于"通讯录"，避免重复写长 URL</li>
+        <li><strong>projects</strong>：声明需要管理的子仓库，指定名称、版本（revision）和存放路径</li>
+        <li><strong>self</strong>：指明 manifest 文件所在的仓库本身的位置</li>
+      </ul>
+
+      <h3>常用 West 命令</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 初始化工作区（拉取 zephyr 和所有依赖）</span>
+<span class="fn">west</span> init https://github.com/zephyrproject-rtos/zephyr
+
+<span class="cm"># 更新所有仓库到 manifest 指定的版本</span>
+<span class="fn">west</span> update
+
+<span class="cm"># 构建项目</span>
+<span class="fn">west</span> build -b nrf52840dk_nrf52840 <span class="str">./my-app</span>
+
+<span class="cm"># 重新构建（不清除缓存）</span>
+<span class="fn">west</span> build -b nrf52840dk_nrf52840 <span class="str">./my-app</span> --pristine
+
+<span class="cm"># 烧录固件</span>
+<span class="fn">west</span> flash
+
+<span class="cm"># 启动调试器</span>
+<span class="fn">west</span> debug
+
+<span class="cm"># 查看工作区中所有项目状态</span>
+<span class="fn">west</span> list
+
+<span class="cm"># 查看当前 manifest 信息</span>
+<span class="fn">west</span> manifest --freeze</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>提示：</strong>当你切换分支或更新 west.yml 后，务必执行 <code>west update</code> 来同步所有子仓库到正确的版本。否则可能出现编译错误，因为代码和依赖版本不匹配。</p>
+      </blockquote>
+
+      <div class="info-card">
+        <div class="info-card-title">West 与 Git Submodule 的区别</div>
+        <table class="comparison-table">
+          <tr><th>特性</th><th>Git Submodule</th><th>West</th></tr>
+          <tr><td>版本管理</td><td>每个 submodule 独立记录 commit</td><td>中心化 manifest 统一管理</td></tr>
+          <tr><td>依赖解析</td><td>不支持</td><td>支持项目间依赖关系</td></tr>
+          <tr><td>部分克隆</td><td>不支持</td><td>支持 west update --fetch-opt</td></tr>
+          <tr><td>构建集成</td><td>无</td><td>内置 build/flash/debug 命令</td></tr>
+          <tr><td>多清单合并</td><td>不支持</td><td>支持 import 机制合并多个清单</td></tr>
+        </table>
+      </div>
+
+      <h2 id="cmake">CMake 构建系统详解</h2>
+
+      <h3>Zephyr 如何使用 CMake</h3>
+      <p>Zephyr 选择 CMake 作为构建系统，这和很多嵌入式项目使用 Makefile 直接构建不同。Zephyr 在 CMake 之上封装了一层自己的 API，让你不需要手写复杂的 CMake 规则就能管理源文件、头文件路径和编译选项。</p>
+      <p>当你执行 <code>west build</code> 时，实际上 West 是在调用 CMake 和 Ninja/Make 来完成构建。整个流程可以简化为：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">text</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code>west build
+  └─→ cmake -B build -GNinja -DBOARD=nrf52840dk_nrf52840 ...
+      └─→ ninja -C build</code></pre>
+      </div>
+
+      <h3>CMakeLists.txt 结构</h3>
+      <p>每个 Zephyr 应用的根目录下都有一个 <strong>CMakeLists.txt</strong>，这是构建的入口点。最简单的 CMakeLists.txt 长这样：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">cmake</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">cmake_minimum_required</span>(VERSION 3.20.0)
+
+<span class="fn">find_package</span>(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+<span class="fn">project</span>(my_app)
+
+<span class="fn">target_sources</span>(app PRIVATE <span class="str">src/main.c</span>)</code></pre>
+      </div>
+
+      <p>关键行解释：</p>
+      <ul>
+        <li><code>find_package(Zephyr)</code>：找到 Zephyr 的构建系统，加载所有 Zephyr 提供的 CMake 模块</li>
+        <li><code>project(my_app)</code>：声明项目名称</li>
+        <li><code>target_sources(app PRIVATE ...)</code>：向 <code>app</code> 目标添加源文件，<code>app</code> 是 Zephyr 预定义的构建目标</li>
+      </ul>
+
+      <h3>添加多个源文件</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">cmake</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">cmake_minimum_required</span>(VERSION 3.20.0)
+
+<span class="fn">find_package</span>(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+<span class="fn">project</span>(sensor_demo)
+
+<span class="fn">target_sources</span>(app PRIVATE
+    <span class="str">src/main.c</span>
+    <span class="str">src/sensor.c</span>
+    <span class="str">src/ble.c</span>
+    <span class="str">src/display.c</span>
+)
+
+<span class="cm"># 添加头文件搜索路径</span>
+<span class="fn">target_include_directories</span>(app PRIVATE <span class="str">src/include</span>)</code></pre>
+      </div>
+
+      <h3>zephyr_library() — 创建库</h3>
+      <p>当项目变大时，把代码组织成库是更好的做法。Zephyr 提供了 <code>zephyr_library()</code> API 来创建库：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">cmake</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 创建一个名为 my_lib 的库</span>
+<span class="fn">zephyr_library</span>(my_lib)
+
+<span class="cm"># 向库中添加源文件</span>
+<span class="fn">zephyr_library_sources</span>(
+    <span class="str">my_lib/init.c</span>
+    <span class="str">my_lib/processing.c</span>
+)
+
+<span class="cm"># 向库中添加头文件路径</span>
+<span class="fn">zephyr_library_include_directories</span>(<span class="str">my_lib/include</span>)
+
+<span class="cm"># 为库设置编译选项</span>
+<span class="fn">zephyr_library_compile_definitions</span>(MY_LIB_DEBUG)</code></pre>
+      </div>
+
+      <h3>构建类型</h3>
+      <p>Zephyr 支持多种构建类型，通过 CMake 变量 <code>CONF_FILE</code> 或命令行参数控制：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># Debug 构建（默认，包含调试信息，无优化）</span>
+<span class="fn">west</span> build -b nrf52840dk_nrf52840 -- -DCONFIG_DEBUG=y
+
+<span class="cm"># Release 构建（开启优化，去除调试信息）</span>
+<span class="fn">west</span> build -b nrf52840dk_nrf52840 -- -DCONFIG_RELEASE=y
+
+<span class="cm"># 使用自定义 conf 文件</span>
+<span class="fn">west</span> build -b nrf52840dk_nrf52840 -- -DCONF_FILE=prj_release.conf</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>提示：</strong>开发阶段使用 Debug 构建，方便断点调试。发布时切换到 Release 构建，固件体积更小、运行更快。也可以通过 <code>-DOVERLAY_CONFIG=debug.conf</code> 叠加额外配置。</p>
+      </blockquote>
+
+      <h2 id="kconfig">Kconfig 配置系统</h2>
+
+      <h3>Kconfig 是什么？</h3>
+      <p><strong>Kconfig</strong> 是 Zephyr 的配置系统，它就像餐厅的菜单——菜单上列出了所有可选的菜品（功能模块），你可以根据自己的口味（需求）来选择。每道菜可能还有前提条件（比如点了火锅才能加蘸料），这对应 Kconfig 的依赖关系。</p>
+      <p>通过 Kconfig，你可以精确控制哪些功能被编译进固件，哪些被排除。这对于资源受限的嵌入式设备至关重要——每一字节 Flash 都很珍贵。</p>
+
+      <h3>prj.conf 配置文件</h3>
+      <p><strong>prj.conf</strong> 是项目的主配置文件，所有 <code>CONFIG_</code> 开头的选项都在这里设置：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">conf</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 串口驱动 - 必须开启才能使用 UART</span>
+<span class="macro">CONFIG_SERIAL</span>=y
+
+<span class="cm"># GPIO 驱动 - 控制引脚输入输出</span>
+<span class="macro">CONFIG_GPIO</span>=y
+
+<span class="cm"># 蓝牙功能</span>
+<span class="macro">CONFIG_BT</span>=y
+<span class="macro">CONFIG_BT_PERIPHERAL</span>=y
+<span class="macro">CONFIG_BT_DEVICE_NAME</span>=<span class="str">"My Zephyr Device"</span>
+
+<span class="cm"># 日志系统</span>
+<span class="macro">CONFIG_LOG</span>=y
+<span class="macro">CONFIG_LOG_DEFAULT_LEVEL</span>=<span class="num">3</span>
+
+<span class="cm"># 调试选项</span>
+<span class="macro">CONFIG_DEBUG</span>=y
+<span class="macro">CONFIG_STACK_USAGE</span>=y</code></pre>
+      </div>
+
+      <p>配置值的类型有三种：</p>
+      <ul>
+        <li><strong>布尔型</strong>：<code>=y</code>（启用）或 <code>=n</code>（禁用），如 <code>CONFIG_SERIAL=y</code></li>
+        <li><strong>整型</strong>：<code>=数字</code>，如 <code>CONFIG_LOG_DEFAULT_LEVEL=3</code></li>
+        <li><strong>字符串</strong>：<code>="值"</code>，如 <code>CONFIG_BT_DEVICE_NAME="My Device"</code></li>
+      </ul>
+
+      <h3>menuconfig 交互式配置界面</h3>
+      <p>如果你不确定有哪些配置选项，或者想浏览所有可用的配置，可以使用 <strong>menuconfig</strong>——一个类似 BIOS 设置界面的交互式工具：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 在已构建的项目中打开 menuconfig</span>
+<span class="fn">west</span> build -t menuconfig</code></pre>
+      </div>
+
+      <p>在 menuconfig 中，你可以：</p>
+      <ul>
+        <li>按 <code>/</code> 搜索配置项名称</li>
+        <li>按 <code>?</code> 查看当前选项的详细说明和依赖关系</li>
+        <li>用空格键切换布尔值的开关状态</li>
+        <li>用回车键进入子菜单或编辑数值</li>
+      </ul>
+
+      <blockquote>
+        <p><strong>提示：</strong>在 menuconfig 中修改配置后，按 <code>Q</code> 退出并保存，配置会写入 <code>build/zephyr/.config</code>。记得把需要的配置同步到你的 <code>prj.conf</code> 中，否则下次构建时配置会丢失。</p>
+      </blockquote>
+
+      <h3>如何查找可用的配置选项</h3>
+      <p>除了 menuconfig，你还可以通过以下方式查找配置选项：</p>
+      <ul>
+        <li>在 Zephyr 源码中搜索 <code>Kconfig</code> 文件，每个模块都有自己的 Kconfig 定义</li>
+        <li>查看 <a href="https://docs.zephyrproject.org/latest/kconfig.html" style="color:var(--accent-cyan)">官方 Kconfig 文档</a></li>
+        <li>使用 <code>west build -t guiconfig</code> 启动图形化配置界面（需要 Python tkinter）</li>
+      </ul>
+
+      <h3>依赖解析</h3>
+      <p>Kconfig 的依赖机制确保你不会启用一个功能却忘了它的前置条件。比如，启用蓝牙外设角色需要先启用蓝牙：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">kconfig</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 在 Zephyr 源码中的 Kconfig 定义</span>
+<span class="kw">config</span> <span class="type">BT</span>
+    <span class="kw">bool</span> <span class="str">"Bluetooth support"</span>
+
+<span class="kw">config</span> <span class="type">BT_PERIPHERAL</span>
+    <span class="kw">bool</span> <span class="str">"Peripheral Role"</span>
+    <span class="kw">depends on</span> <span class="type">BT</span>          <span class="cm"># 依赖 BT 先被启用</span></code></pre>
+      </div>
+
+      <p>如果你在 prj.conf 中写了 <code>CONFIG_BT_PERIPHERAL=y</code> 却没有 <code>CONFIG_BT=y</code>，Kconfig 会自动帮你启用 <code>CONFIG_BT</code>，并给出提示。这就是依赖解析的作用——防止配置冲突和遗漏。</p>
+
+      <div class="info-card warning-card">
+        <div class="info-card-title">⚠️ 常见陷阱</div>
+        <p>有时候你明明在 prj.conf 中设置了 <code>CONFIG_XXX=y</code>，但构建时却没有生效。这通常是因为该选项被其他依赖条件"强制关闭"了。检查方法：在构建目录中查看 <code>build/zephyr/.config</code>，搜索你的选项，看它最终值是什么以及被什么影响。</p>
+      </div>
+
+      <h2 id="devicetree">设备树 Device Tree 详解</h2>
+
+      <h3>设备树是什么？</h3>
+      <p><strong>设备树（Device Tree，简称 DT）</strong>是描述硬件信息的数据结构。你可以把它想象成一张"硬件地图"——它告诉操作系统：这块板子上有什么芯片、每个芯片连在哪个引脚上、时钟频率是多少、有哪些外设等等。</p>
+      <p>使用设备树的好处是：<strong>硬件描述和驱动代码分离</strong>。同一个驱动程序可以适配不同的板子，只需要修改设备树中的参数，而不需要改驱动代码。这就像同一个导航软件可以适配不同城市的地图一样。</p>
+
+      <h3>设备树文件类型</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">text</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code>boards/arm/nrf52840dk_nrf52840/
+├── nrf52840dk_nrf52840.dts       <span class="cm"># 板级设备树（主文件）</span>
+├── nrf52840dk_nrf52840.dtsi      <span class="cm"># 芯片级设备树（SoC 共用）</span>
+└── nrf52840dk_nrf52840.overlay   <span class="cm"># 覆盖文件（应用层自定义）</span></code></pre>
+      </div>
+
+      <ul>
+        <li><strong>.dts</strong>：设备树源文件，描述特定开发板的硬件</li>
+        <li><strong>.dtsi</strong>：设备树包含文件（类似 C 语言的 .h），通常描述芯片 SoC 级别的硬件，被 .dts 文件 include</li>
+        <li><strong>.overlay</strong>：覆盖文件，用于在应用层修改或扩展板级设备树，<strong>不会修改原始板级文件</strong></li>
+      </ul>
+
+      <h3>设备树基本结构</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">dts</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* nrf52840dk_nrf52840.dts 简化示例 */</span>
+/dts-v1/;
+
+<span class="kw">#include</span> <span class="str">&lt;nordic/nrf52840_qiaa.dtsi&gt;</span>
+
+/ {
+    <span class="kw">model</span> = <span class="str">"Nordic nRF52840 DK"</span>;
+    <span class="kw">compatible</span> = <span class="str">"nordic,nrf52840dk-nrf52840"</span>;
+
+    <span class="kw">chosen</span> {
+        <span class="kw">zephyr,console</span> = &amp;uart0;
+        <span class="kw">zephyr,shell-uart</span> = &amp;uart0;
+        <span class="kw">zephyr,sram</span> = &amp;sram0;
+        <span class="kw">zephyr,flash</span> = &amp;flash0;
+    };
+
+    <span class="kw">leds</span> {
+        <span class="kw">compatible</span> = <span class="str">"gpio-leds"</span>;
+        led0: <span class="kw">led_0</span> {
+            <span class="kw">gpios</span> = &lt;&amp;gpio0 <span class="num">13</span> GPIO_ACTIVE_LOW&gt;;
+            <span class="kw">label</span> = <span class="str">"Green LED 0"</span>;
+        };
+    };
+
+    <span class="kw">aliases</span> {
+        <span class="kw">led0</span> = &amp;led0;
+    };
+};
+
+<span class="cm">/* 配置 UART0 节点 */</span>
+&amp;uart0 {
+    <span class="kw">compatible</span> = <span class="str">"nordic,nrf-uart"</span>;
+    <span class="kw">status</span> = <span class="str">"okay"</span>;
+    <span class="kw">current-speed</span> = <span class="num">115200</span>;
+    <span class="kw">tx-pin</span> = <span class="num">6</span>;
+    <span class="kw">rx-pin</span> = <span class="num">8</span>;
+};</code></pre>
+      </div>
+
+      <p>关键概念解读：</p>
+      <ul>
+        <li><strong>compatible</strong>：兼容字符串，是驱动匹配的"身份证号"。驱动程序通过 compatible 字符串找到对应的设备节点</li>
+        <li><strong>chosen</strong>：Zephyr 特有的节点，用来指定系统默认使用的设备（如控制台用哪个 UART）</li>
+        <li><strong>aliases</strong>：别名，让应用代码可以通过通用名称引用设备</li>
+        <li><strong>status</strong>：设备状态，<code>"okay"</code> 表示启用，<code>"disabled"</code> 表示禁用</li>
+      </ul>
+
+      <h3>在 C 代码中访问设备树</h3>
+      <p>Zephyr 提供了一组宏来在编译时读取设备树信息。这些宏以 <code>DT_</code> 开头，在编译时展开为常量，<strong>没有运行时开销</strong>：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">c</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/kernel.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/device.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/drivers/gpio.h&gt;</span>
+
+<span class="cm">/* 通过 nodelabel 获取设备树节点 */</span>
+<span class="macro">#define</span> <span class="type">LED0_NODE</span> <span class="fn">DT_NODELABEL</span>(led0)
+
+<span class="cm">/* 从节点获取 GPIO 信息 */</span>
+<span class="kw">static</span> <span class="kw">const</span> <span class="kw">struct</span> <span class="type">gpio_dt_spec</span> led = <span class="fn">GPIO_DT_SPEC_GET</span>(<span class="type">LED0_NODE</span>, gpios);
+
+<span class="cm">/* 通过路径获取节点 */</span>
+<span class="macro">#define</span> <span class="type">MY_SENSOR</span> <span class="fn">DT_PATH</span>(soc, i2c_40003000, sensor_temp)
+
+<span class="cm">/* 获取 compatible 字符串 */</span>
+<span class="macro">#define</span> <span class="type">SENSOR_COMPAT</span> <span class="fn">DT_NODE_FULL_NAME</span>(<span class="type">MY_SENSOR</span>)
+
+<span class="kw">int</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+    <span class="cm">/* 检查 GPIO 设备是否就绪 */</span>
+    <span class="kw">if</span> (!<span class="fn">device_is_ready</span>(led.port)) {
+        <span class="kw">return</span> -<span class="num">1</span>;
+    }
+
+    <span class="cm">/* 配置 LED 引脚为输出 */</span>
+    <span class="fn">gpio_pin_configure_dt</span>(&amp;led, GPIO_OUTPUT_ACTIVE);
+
+    <span class="kw">while</span> (<span class="num">1</span>) {
+        <span class="fn">gpio_pin_toggle_dt</span>(&amp;led);
+        <span class="fn">k_msleep</span>(<span class="num">500</span>);
+    }
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <h3>Overlay 文件 — 自定义板级配置</h3>
+      <p>当你需要修改开发板的设备树配置（比如换一个引脚、增加一个 I2C 设备），<strong>不要直接修改板级 .dts 文件</strong>——那是 Zephyr 源码的一部分，升级版本时会被覆盖。正确做法是使用 <strong>.overlay 文件</strong>：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">dts</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* boards/nrf52840dk_nrf52840.overlay */</span>
+
+<span class="cm">/* 在 I2C 总线上添加一个温度传感器 */</span>
+&amp;i2c1 {
+    <span class="kw">status</span> = <span class="str">"okay"</span>;
+
+    temp_sensor: <span class="kw">sensor@48</span> {
+        <span class="kw">compatible</span> = <span class="str">"sensirion,sht3xd"</span>;
+        <span class="kw">reg</span> = &lt;<span class="num">0x48</span>&gt;;
+        <span class="kw">label</span> = <span class="str">"SHT3XD"</span>;
+    };
+};
+
+<span class="cm">/* 修改 LED0 的引脚 */</span>
+&amp;led0 {
+    <span class="kw">gpios</span> = &lt;&amp;gpio0 <span class="num">15</span> GPIO_ACTIVE_LOW&gt;;
+};</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>提示：</strong>Overlay 文件放在应用目录下，文件名为 <code>boards/&lt;BOARD_ID&gt;.overlay</code>，构建时 Zephyr 会自动加载它。也可以通过 <code>-DDTC_OVERLAY_FILE=my_custom.overlay</code> 指定自定义路径。</p>
+      </blockquote>
+
+      <h2 id="flash">构建输出与烧录</h2>
+
+      <h3>构建输出文件</h3>
+      <p>构建完成后，在 <code>build/zephyr/</code> 目录下会生成以下关键文件：</p>
+
+      <table class="comparison-table">
+        <tr><th>文件</th><th>格式</th><th>用途</th></tr>
+        <tr><td><code>zephyr.elf</code></td><td>ELF</td><td>包含调试信息的完整可执行文件，用于 GDB 调试</td></tr>
+        <tr><td><code>zephyr.bin</code></td><td>纯二进制</td><td>去除所有元数据的纯固件数据，用于直接烧录 Flash</td></tr>
+        <tr><td><code>zephyr.hex</code></td><td>Intel HEX</td><td>带地址信息的十六进制格式，大多数烧录工具的首选格式</td></tr>
+        <tr><td><code>zephyr.map</code></td><td>链接器映射</td><td>显示每个函数和变量的内存地址，用于分析内存使用</td></tr>
+      </table>
+
+      <h3>west flash 烧录命令</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 基本烧录（自动检测连接的开发板）</span>
+<span class="fn">west</span> flash
+
+<span class="cm"># 指定烧录器（runner）</span>
+<span class="fn">west</span> flash --runner jlink
+
+<span class="fn">west</span> flash --runner openocd
+
+<span class="fn">west</span> flash --runner pyocd
+
+<span class="cm"># 烧录指定 HEX 文件</span>
+<span class="fn">west</span> flash --hex-file <span class="str">build/zephyr/zephyr.hex</span>
+
+<span class="cm"># 擦除整个 Flash 后再烧录</span>
+<span class="fn">west</span> flash --erase
+
+<span class="cm"># 指定 J-Link 的序列号（多调试器时有用）</span>
+<span class="fn">west</span> flash --runner jlink --dev-id <span class="str">12345678</span></code></pre>
+      </div>
+
+      <h3>调试 — west debug</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 启动 GDB 调试会话</span>
+<span class="fn">west</span> debug
+
+<span class="cm"># 指定调试器</span>
+<span class="fn">west</span> debug --runner jlink
+
+<span class="cm"># 只启动 GDB Server（不连接客户端）</span>
+<span class="fn">west</span> debug --runner openocd --server-only</code></pre>
+      </div>
+
+      <p>调试流程说明：</p>
+      <ol>
+        <li><code>west debug</code> 会启动 GDB 客户端并连接到目标芯片</li>
+        <li>在 GDB 中使用 <code>break main</code> 设置断点</li>
+        <li>使用 <code>continue</code> 运行程序</li>
+        <li>使用 <code>step</code>、<code>next</code>、<code>print</code> 等命令进行调试</li>
+      </ol>
+
+      <h3>常见烧录问题</h3>
+
+      <div class="info-card danger-card">
+        <div class="info-card-title">❌ 找不到调试器</div>
+        <p>确保调试器驱动已安装。J-Link 需要安装 SEGGER 驱动，OpenOCD 需要确保 USB 设备被识别。运行 <code>west flash --runner jlink --verbose</code> 查看详细日志。</p>
+      </div>
+
+      <div class="info-card danger-card">
+        <div class="info-card-title">❌ 烧录后程序不运行</div>
+        <p>检查以下可能原因：1) 设备树中 UART 或其他外设的引脚配置错误；2) Kconfig 中缺少必要的驱动配置；3) 供电不足导致芯片复位。查看串口输出是否有启动日志。</p>
+      </div>
+
+      <div class="info-card danger-card">
+        <div class="info-card-title">❌ Flash 空间不足</div>
+        <p>运行 <code>west build -t rom_report</code> 查看各模块占用的 Flash 空间。关闭不需要的 Kconfig 选项（如 <code>CONFIG_LOG=n</code>、<code>CONFIG_DEBUG=n</code>）可以显著减小固件体积。</p>
+      </div>
+
+      <div class="info-card tip-card">
+        <div class="info-card-title">💡 实用技巧</div>
+        <p>使用 <code>west build -t ram_report</code> 和 <code>west build -t rom_report</code> 可以分别查看 RAM 和 Flash 的详细使用情况，帮助你优化资源占用。如果需要更详细的分析，可以使用 <code>west build -t puncover</code> 生成可视化的代码大小分析报告。</p>
+      </div>
+
+    </div>
+  </div>
+  <script type="module" src="/assets/js/search-index.js"></script>
+  <script type="module" src="/assets/js/main.js"></script>
+</body>
+</html>

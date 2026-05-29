@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>实战项目 - Zephyr RTOS 中文知识库</title>
+  <link rel="stylesheet" href="/assets/css/main.css">
+</head>
+<body>
+  <div class="content-wrapper">
+    <div class="toc"></div>
+    <div class="content">
+      <h1>实战项目</h1>
+      <p class="subtitle">从零到一，用 Zephyr RTOS 构建完整的物联网产品 —— 传感器节点、MQTT 网关、可穿戴设备、OTA 升级与自定义板移植</p>
+
+      <h2 id="sensor-node">智能传感器节点</h2>
+      <p>这是最经典的 Zephyr 入门实战项目。我们将使用 <strong>nRF52840</strong> 开发板搭配 <strong>BME280</strong> 温湿度气压传感器，通过 I2C 总线读取环境数据，然后通过 BLE 广播出去。设备在两次采样之间进入低功耗睡眠模式，实现超长续航。</p>
+
+      <h3>项目架构</h3>
+      <p>整个项目分为三个核心模块：<strong>传感器采集</strong>、<strong>BLE 广播</strong>和<strong>低功耗管理</strong>。主循环每次唤醒后依次执行：读传感器 → 组装广播数据 → BLE 广播 → 重新进入睡眠。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">text</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code>sensor-node/
+├── CMakeLists.txt
+├── prj.conf
+├── boards/
+│   └── nrf52840dk_nrf52840.overlay
+└── src/
+    └── main.c</code></pre>
+      </div>
+
+      <h3>设备树覆盖层</h3>
+      <p>BME280 挂在 I2C0 总线上，地址为 0x76。我们需要通过设备树覆盖层告诉 Zephyr 这个传感器的存在和连接方式。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">dts</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* boards/nrf52840dk_nrf52840.overlay */</span>
+&amp;<span class="fn">i2c0</span> {
+    <span class="kw">compatible</span> = <span class="str">"nordic,nrf-twi"</span>;
+    <span class="kw">status</span> = <span class="str">"okay"</span>;
+
+    <span class="fn">bme280</span>: bme280@<span class="num">76</span> {
+        <span class="kw">compatible</span> = <span class="str">"bosch,bme280"</span>;
+        <span class="kw">reg</span> = &lt;<span class="num">0x76</span>&gt;;
+        <span class="kw">label</span> = <span class="str">"BME280"</span>;
+    };
+};</code></pre>
+      </div>
+
+      <h3>主程序</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/kernel.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/device.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/drivers/sensor.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/bluetooth/bluetooth.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/bluetooth/conn.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/pm/pm.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/pm/device.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;stdio.h&gt;</span>
+
+<span class="macro">#define</span> <span class="fn">SLEEP_MS</span>    <span class="num">5000</span>
+<span class="macro">#define</span> <span class="fn">ADV_INTERVAL</span> <span class="num">100</span>
+
+<span class="kw">static</span> <span class="kw">const</span> <span class="kw">struct</span> <span class="type">bt_data</span> ad[] = {
+    <span class="fn">BT_DATA_BYTES</span>(<span class="type">BT_DATA_FLAGS</span>,
+                  (<span class="type">BT_LE_AD_GENERAL</span> | <span class="type">BT_LE_AD_NO_BREDR</span>)),
+    <span class="fn">BT_DATA_BYTES</span>(<span class="type">BT_DATA_MANUFACTURER_DATA</span>,
+                  <span class="num">0x59</span>, <span class="num">0x00</span>,   <span class="cm">/* Nordic Semiconductor 公司 ID */</span>
+                  <span class="num">0x00</span>, <span class="num">0x00</span>, <span class="num">0x00</span>,  <span class="cm">/* 温度占位 */</span>
+                  <span class="num">0x00</span>, <span class="num">0x00</span>,        <span class="cm">/* 湿度占位 */</span>
+                  <span class="num">0x00</span>, <span class="num">0x00</span>),       <span class="cm">/* 气压占位 */</span>
+};
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">update_adv_data</span>(<span class="kw">double</span> temp, <span class="kw">double</span> hum, <span class="kw">double</span> press)
+{
+    <span class="cm">/* 直接修改 ad[1] 中 manufacturer data 的传感器字段 */</span>
+    <span class="type">uint8_t</span> *data = (<span class="type">uint8_t</span> *)ad[<span class="num">1</span>].data + <span class="num">2</span>;
+
+    <span class="type">int16_t</span> t = (<span class="type">int16_t</span>)(temp * <span class="num">100</span>);
+    <span class="type">uint16_t</span> h = (<span class="type">uint16_t</span>)(hum * <span class="num">100</span>);
+    <span class="type">uint16_t</span> p = (<span class="type">uint16_t</span>)(press / <span class="num">10</span>);
+
+    data[<span class="num">0</span>] = t &amp; <span class="num">0xFF</span>;  data[<span class="num">1</span>] = (t >> <span class="num">8</span>) &amp; <span class="num">0xFF</span>;
+    data[<span class="num">2</span>] = h &amp; <span class="num">0xFF</span>;  data[<span class="num">3</span>] = (h >> <span class="num">8</span>) &amp; <span class="num">0xFF</span>;
+    data[<span class="num">4</span>] = p &amp; <span class="num">0xFF</span>;  data[<span class="num">5</span>] = (p >> <span class="num">8</span>) &amp; <span class="num">0xFF</span>;
+}
+
+<span class="kw">int</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+    <span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *bme = <span class="fn">DEVICE_DT_GET_ANY</span>(<span class="type">bosch_bme280</span>);
+
+    <span class="kw">if</span> (!<span class="fn">device_is_ready</span>(bme)) {
+        <span class="fn">printk</span>(<span class="str">"BME280 未就绪！\n"</span>);
+        <span class="kw">return</span> -<span class="num">1</span>;
+    }
+
+    <span class="fn">bt_enable</span>(<span class="macro">NULL</span>);
+    <span class="fn">bt_le_adv_start</span>(<span class="type">BT_LE_ADV_PARAM</span>(<span class="type">BT_LE_ADV_OPT_USE_IDENTITY</span>,
+                           <span class="fn">BT_GAP_ADV_FAST_INT_MIN_2</span>,
+                           <span class="fn">BT_GAP_ADV_FAST_INT_MAX_2</span>, <span class="macro">NULL</span>),
+                     ad, <span class="fn">ARRAY_SIZE</span>(ad), <span class="macro">NULL</span>, <span class="num">0</span>);
+
+    <span class="fn">printk</span>(<span class="str">"传感器节点启动完成\n"</span>);
+
+    <span class="kw">while</span> (<span class="num">1</span>) {
+        <span class="kw">struct</span> <span class="type">sensor_value</span> sv_temp, sv_hum, sv_press;
+
+        <span class="fn">sensor_sample_fetch</span>(bme);
+        <span class="fn">sensor_channel_get</span>(bme, <span class="type">SENSOR_CHAN_AMBIENT_TEMP</span>, &amp;sv_temp);
+        <span class="fn">sensor_channel_get</span>(bme, <span class="type">SENSOR_CHAN_HUMIDITY</span>, &amp;sv_hum);
+        <span class="fn">sensor_channel_get</span>(bme, <span class="type">SENSOR_CHAN_PRESS</span>, &amp;sv_press);
+
+        <span class="kw">double</span> temp  = <span class="fn">sensor_value_to_double</span>(&amp;sv_temp);
+        <span class="kw">double</span> hum   = <span class="fn">sensor_value_to_double</span>(&amp;sv_hum);
+        <span class="kw">double</span> press = <span class="fn">sensor_value_to_double</span>(&amp;sv_press);
+
+        <span class="fn">printk</span>(<span class="str">"T: %.2f°C  H: %.2f%%  P: %.2f hPa\n"</span>,
+               temp, hum, press);
+
+        <span class="fn">update_adv_data</span>(temp, hum, press);
+        <span class="fn">bt_le_adv_update_data</span>(ad, <span class="fn">ARRAY_SIZE</span>(ad), <span class="macro">NULL</span>, <span class="num">0</span>);
+
+        <span class="fn">k_msleep</span>(<span class="fn">SLEEP_MS</span>);
+    }
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <h3>项目配置 prj.conf</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">conf</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 基础配置</span>
+<span class="macro">CONFIG_SERIAL</span>=y
+<span class="macro">CONFIG_PRINTK</span>=y
+
+<span class="cm"># I2C 与传感器</span>
+<span class="macro">CONFIG_I2C</span>=y
+<span class="macro">CONFIG_SENSOR</span>=y
+<span class="macro">CONFIG_BME280</span>=y
+
+<span class="cm"># BLE</span>
+<span class="macro">CONFIG_BT</span>=y
+<span class="macro">CONFIG_BT_PERIPHERAL</span>=y
+<span class="macro">CONFIG_BT_DEVICE_NAME</span>=<span class="str">"SensorNode"</span>
+
+<span class="cm"># 低功耗</span>
+<span class="macro">CONFIG_PM</span>=y
+<span class="macro">CONFIG_PM_DEVICE</span>=y
+<span class="macro">CONFIG_PM_POLICY_APP</span>=y</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>BLE 广播数据最大 31 字节，我们的 manufacturer data 段只用了 8 字节（2 字节公司 ID + 6 字节传感器数据），非常紧凑。如果需要广播更多数据，可以考虑使用 BLE Extended Advertising（扩展广播），最大支持 1650 字节。</p>
+      </blockquote>
+
+      <blockquote>
+        <p><strong>低功耗关键：</strong>在 nRF52840 上，<code>k_msleep()</code> 会让 CPU 进入空闲睡眠。配合 <code>CONFIG_PM=y</code>，电源管理子系统会自动将设备推入更深的低功耗状态（如 System OFF），大幅降低功耗。实测睡眠电流可低至 1.5μA。</p>
+      </blockquote>
+
+      <h2 id="mqtt-gateway">MQTT 物联网网关</h2>
+      <p>在物联网系统中，传感器节点负责采集数据，而<strong>网关</strong>负责把数据转发到云端。本项目使用 <strong>ESP32</strong> 开发板，通过 WiFi 连接网络，使用 MQTT 协议与云平台通信——订阅控制主题接收指令，发布传感器主题上报数据。</p>
+
+      <h3>项目架构</h3>
+      <p>网关的核心工作流：<strong>WiFi 连接 → MQTT 连接 → 订阅控制主题 → 定时发布传感器数据 → 处理下行命令</strong>。我们使用 Zephyr 的网络管理接口来管理 WiFi 连接，使用 MQTT 客户端库来处理消息收发。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">text</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code>mqtt-gateway/
+├── CMakeLists.txt
+├── prj.conf
+└── src/
+    └── main.c</code></pre>
+      </div>
+
+      <h3>主程序</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/kernel.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/net/wifi_mgmt.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/net/mqtt.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/net/socket.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/net/net_mgmt.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;stdio.h&gt;</span>
+
+<span class="macro">#define</span> <span class="fn">WIFI_SSID</span>      <span class="str">"MyHomeWiFi"</span>
+<span class="macro">#define</span> <span class="fn">WIFI_PSK</span>       <span class="str">"my_password"</span>
+<span class="macro">#define</span> <span class="fn">MQTT_BROKER</span>    <span class="str">"192.168.1.100"</span>
+<span class="macro">#define</span> <span class="fn">MQTT_PORT</span>      <span class="num">1883</span>
+<span class="macro">#define</span> <span class="fn">PUB_TOPIC</span>      <span class="str">"sensor/data"</span>
+<span class="macro">#define</span> <span class="fn">SUB_TOPIC</span>      <span class="str">"sensor/cmd"</span>
+
+<span class="kw">static</span> <span class="kw">struct</span> <span class="type">mqtt_client</span> client;
+<span class="kw">static</span> <span class="type">uint8_t</span> rx_buf[<span class="num">256</span>];
+<span class="kw">static</span> <span class="type">uint8_t</span> tx_buf[<span class="num">256</span>];
+<span class="kw">static</span> <span class="kw">struct</span> <span class="type">sockaddr_in</span> broker;
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">mqtt_evt_handler</span>(<span class="kw">struct</span> <span class="type">mqtt_client</span> *c,
+                              <span class="kw">const</span> <span class="kw">struct</span> <span class="type">mqtt_evt</span> *evt)
+{
+    <span class="kw">switch</span> (evt->type) {
+    <span class="kw">case</span> <span class="type">MQTT_EVT_CONNACK</span>:
+        <span class="fn">printk</span>(<span class="str">"MQTT 已连接\n"</span>);
+        <span class="kw">break</span>;
+    <span class="kw">case</span> <span class="type">MQTT_EVT_PUBLISH</span>: {
+        <span class="kw">const</span> <span class="kw">struct</span> <span class="type">mqtt_publish_param</span> *p = &amp;evt->param.publish;
+        <span class="type">uint8_t</span> payload[<span class="num">128</span>];
+        <span class="type">int</span> len = <span class="fn">mqtt_publish_payload_get</span>(
+                      c, p, payload, <span class="fn">sizeof</span>(payload) - <span class="num">1</span>);
+        payload[len] = <span class="str">'\0'</span>;
+        <span class="fn">printk</span>(<span class="str">"收到命令: %s\n"</span>, payload);
+        <span class="kw">break</span>;
+    }
+    <span class="kw">default</span>:
+        <span class="kw">break</span>;
+    }
+}
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">mqtt_setup</span>(<span class="kw">void</span>)
+{
+    <span class="fn">mqtt_client_init</span>(&amp;client);
+
+    broker.sin_family = <span class="type">AF_INET</span>;
+    broker.sin_port = <span class="fn">htons</span>(<span class="fn">MQTT_PORT</span>);
+    <span class="fn">net_addr_pton</span>(<span class="type">AF_INET</span>, <span class="fn">MQTT_BROKER</span>, &amp;broker.sin_addr);
+
+    <span class="kw">struct</span> <span class="type">mqtt_utf8</span> username = <span class="fn">MQTT_UTF8_LITERAL</span>(<span class="str">"zephyr-gw"</span>);
+    <span class="kw">struct</span> <span class="type">mqtt_utf8</span> password = <span class="fn">MQTT_UTF8_LITERAL</span>(<span class="str">"gw-pass"</span>);
+
+    client.broker = (<span class="kw">struct</span> <span class="type">sockaddr</span> *)&amp;broker;
+    client.evt_cb = mqtt_evt_handler;
+    client.client_id.utf8 = (<span class="type">uint8_t</span> *)<span class="str">"zephyr-gw-01"</span>;
+    client.client_id.size = <span class="fn">sizeof</span>(<span class="str">"zephyr-gw-01"</span>) - <span class="num">1</span>;
+    client.password = &amp;password;
+    client.user_name = &amp;username;
+    client.rx_buf = rx_buf;
+    client.rx_buf_size = <span class="fn">sizeof</span>(rx_buf);
+    client.tx_buf = tx_buf;
+    client.tx_buf_size = <span class="fn">sizeof</span>(tx_buf);
+
+    <span class="fn">mqtt_connect</span>(&amp;client);
+}
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">mqtt_subscribe_cmd</span>(<span class="kw">void</span>)
+{
+    <span class="kw">struct</span> <span class="type">mqtt_topic</span> sub_topic = {
+        .topic.utf8 = (<span class="type">uint8_t</span> *)<span class="fn">SUB_TOPIC</span>,
+        .topic.size = <span class="fn">strlen</span>(<span class="fn">SUB_TOPIC</span>),
+        .qos = <span class="type">MQTT_QOS_1_AT_LEAST_ONCE</span>,
+    };
+    <span class="kw">struct</span> <span class="type">mqtt_subscription_list</span> sub = {
+        .list = &amp;sub_topic,
+        .list_count = <span class="num">1</span>,
+    };
+    <span class="fn">mqtt_subscribe</span>(&amp;client, &amp;sub);
+}
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">publish_sensor_data</span>(<span class="kw">void</span>)
+{
+    <span class="kw">char</span> payload[<span class="num">128</span>];
+    <span class="type">int64_t</span> ts = <span class="fn">k_uptime_get</span>();
+
+    <span class="fn">snprintf</span>(payload, <span class="fn">sizeof</span>(payload),
+             <span class="str">"{\"ts\":%lld,\"temp\":23.5,\"hum\":65.2}"</span>, ts);
+
+    <span class="kw">struct</span> <span class="type">mqtt_publish_param</span> pub = {
+        .message.topic.topic.utf8 = (<span class="type">uint8_t</span> *)<span class="fn">PUB_TOPIC</span>,
+        .message.topic.topic.size = <span class="fn">strlen</span>(<span class="fn">PUB_TOPIC</span>),
+        .message.topic.qos = <span class="type">MQTT_QOS_1_AT_LEAST_ONCE</span>,
+        .message.payload.data = payload,
+        .message.payload.len = <span class="fn">strlen</span>(payload),
+    };
+
+    <span class="fn">mqtt_publish</span>(&amp;client, &amp;pub);
+    <span class="fn">printk</span>(<span class="str">"已发布: %s\n"</span>, payload);
+}
+
+<span class="kw">int</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+    <span class="cm">/* WiFi 连接（通过 net_mgmt 事件等待 DHCP） */</span>
+    <span class="kw">struct</span> <span class="type">wifi_connect_req_params</span> wifi = {
+        .ssid = <span class="fn">WIFI_SSID</span>,
+        .ssid_length = <span class="fn">strlen</span>(<span class="fn">WIFI_SSID</span>),
+        .psk = <span class="fn">WIFI_PSK</span>,
+        .psk_length = <span class="fn">strlen</span>(<span class="fn">WIFI_PSK</span>),
+        .security = <span class="type">WIFI_SECURITY_TYPE_PSK</span>,
+        .channel = <span class="type">WIFI_CHANNEL_ANY</span>,
+    };
+
+    <span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *net_dev = <span class="fn">DEVICE_DT_GET</span>(<span class="type">DT_CHOSEN</span>(zephyr_wifi));
+    <span class="fn">net_mgmt</span>(<span class="type">NET_REQUEST_WIFI_CONNECT</span>, net_dev,
+              &amp;wifi, <span class="fn">sizeof</span>(wifi));
+
+    <span class="fn">printk</span>(<span class="str">"正在连接 WiFi...\n"</span>);
+    <span class="fn">k_sleep</span>(<span class="fn">K_SECONDS</span>(<span class="num">5</span>));
+
+    <span class="cm">/* MQTT 连接 */</span>
+    <span class="fn">mqtt_setup</span>();
+    <span class="fn">k_sleep</span>(<span class="fn">K_SECONDS</span>(<span class="num">2</span>));
+
+    <span class="cm">/* 订阅控制主题 */</span>
+    <span class="fn">mqtt_subscribe_cmd</span>();
+
+    <span class="cm">/* 主循环：定时发布数据 */</span>
+    <span class="kw">while</span> (<span class="num">1</span>) {
+        <span class="fn">mqtt_input</span>(&amp;client);
+        <span class="fn">mqtt_live</span>(&amp;client);
+        <span class="fn">publish_sensor_data</span>();
+        <span class="fn">k_sleep</span>(<span class="fn">K_SECONDS</span>(<span class="num">10</span>));
+    }
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <h3>项目配置 prj.conf</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">conf</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 网络</span>
+<span class="macro">CONFIG_NETWORKING</span>=y
+<span class="macro">CONFIG_NET_IPV4</span>=y
+<span class="macro">CONFIG_NET_TCP</span>=y
+<span class="macro">CONFIG_NET_SOCKETS</span>=y
+<span class="macro">CONFIG_NET_DHCPV4</span>=y
+<span class="macro">CONFIG_DNS_RESOLVER</span>=y
+
+<span class="cm"># WiFi（ESP32）</span>
+<span class="macro">CONFIG_WIFI</span>=y
+<span class="macro">CONFIG_WIFI_ESP32</span>=y
+<span class="macro">CONFIG_NET_L2_ETHERNET</span>=y
+<span class="macro">CONFIG_NET_MGMT</span>=y
+<span class="macro">CONFIG_NET_MGMT_EVENT</span>=y
+
+<span class="cm"># MQTT</span>
+<span class="macro">CONFIG_MQTT_LIB</span>=y
+<span class="macro">CONFIG_MQTT_LIB_TLS</span>=n
+
+<span class="cm"># 调试</span>
+<span class="macro">CONFIG_PRINTK</span>=y
+<span class="macro">CONFIG_LOG</span>=y
+<span class="macro">CONFIG_NET_LOG</span>=y
+
+<span class="cm"># 内存</span>
+<span class="macro">CONFIG_NET_BUF_RX_COUNT</span>=<span class="num">16</span>
+<span class="macro">CONFIG_NET_BUF_TX_COUNT</span>=<span class="num">16</span>
+<span class="macro">CONFIG_NET_BUF_DATA_SIZE</span>=<span class="num">128</span></code></pre>
+      </div>
+
+      <div class="warning-card">
+        <p>上面的 WiFi 连接代码做了简化。在实际项目中，你应该通过 <code>net_mgmt_event_callback</code> 来监听 <code>NET_EVENT_IPV4_ADDR_ADD</code> 事件，确认获取到 IP 地址后再启动 MQTT 连接，否则 MQTT 可能因网络未就绪而连接失败。</p>
+      </div>
+
+      <h2 id="wearable">低功耗可穿戴设备</h2>
+      <p>可穿戴设备是 Zephyr 最擅长的领域之一。nRF52 系列芯片天生为低功耗 BLE 设计，配合 Zephyr 的电源管理框架，可以实现<strong>数月甚至数年的纽扣电池续航</strong>。本节我们设计一个心率监测手环的架构方案。</p>
+
+      <h3>系统架构</h3>
+      <p>可穿戴设备的核心挑战是<strong>在极低功耗下完成传感器采集和无线通信</strong>。我们的架构设计遵循"快速采集 → 快速发送 → 长时间睡眠"的原则：</p>
+      <ul>
+        <li><strong>心率传感器</strong>：通过 I2C 连接 MAX30102 光电脉搏传感器，每次唤醒采集 5 秒心率数据</li>
+        <li><strong>BLE GATT 服务</strong>：实现标准 Heart Rate Service (UUID 0x180D)，手机可直接连接读取</li>
+        <li><strong>电源管理</strong>：利用 Zephyr PM 框架，空闲时进入深度睡眠，仅 RTC 定时器保持运行</li>
+        <li><strong>事件驱动</strong>：不使用轮询，所有操作由定时器中断或 BLE 事件触发</li>
+      </ul>
+
+      <h3>关键代码：BLE GATT 心率服务</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/bluetooth/bluetooth.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/bluetooth/gatt.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/bluetooth/uuid.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/pm/pm.h&gt;</span>
+
+<span class="macro">#define</span> <span class="fn">HR_MEAS_INTERVAL_MS</span>  <span class="num">60000</span>
+
+<span class="kw">static</span> <span class="type">uint8_t</span> hr_value = <span class="num">72</span>;
+<span class="kw">static</span> <span class="type">bool</span> hr_notify_enabled;
+
+<span class="kw">static</span> <span class="type">ssize_t</span> <span class="fn">hr_read</span>(<span class="kw">struct</span> <span class="type">bt_conn</span> *conn,
+                       <span class="kw">const</span> <span class="kw">struct</span> <span class="type">bt_gatt_attr</span> *attr,
+                       <span class="kw">void</span> *buf, <span class="type">uint16_t</span> len,
+                       <span class="type">uint16_t</span> offset)
+{
+    <span class="kw">return</span> <span class="fn">bt_gatt_attr_read</span>(conn, attr, buf, len, offset,
+                              &amp;hr_value, <span class="fn">sizeof</span>(hr_value));
+}
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">hr_ccc_cfg_changed</span>(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">bt_gatt_attr</span> *attr,
+                                   <span class="type">uint16_t</span> value)
+{
+    hr_notify_enabled = (value == <span class="type">BT_GATT_CCC_NOTIFY</span>);
+}
+
+<span class="cm">/* Heart Rate Service GATT 定义 */</span>
+<span class="macro">BT_GATT_SERVICE_DEFINE</span>(hr_svc,
+    <span class="cm">/* Primary Service: Heart Rate (0x180D) */</span>
+    <span class="type">BT_GATT_PRIMARY_SERVICE</span>(<span class="type">BT_UUID_HRS</span>),
+
+    <span class="cm">/* Heart Rate Measurement */</span>
+    <span class="type">BT_GATT_CHARACTERISTIC</span>(<span class="type">BT_UUID_HRS_MEASUREMENT</span>,
+                            <span class="type">BT_GATT_CHRC_READ</span> | <span class="type">BT_GATT_CHRC_NOTIFY</span>,
+                            <span class="type">BT_GATT_PERM_READ</span>,
+                            hr_read, <span class="macro">NULL</span>, <span class="macro">NULL</span>),
+    <span class="type">BT_GATT_CCC</span>(hr_ccc_cfg_changed,
+                <span class="type">BT_GATT_PERM_READ</span> | <span class="type">BT_GATT_PERM_WRITE</span>),
+
+    <span class="cm">/* Body Sensor Location */</span>
+    <span class="type">BT_GATT_CHARACTERISTIC</span>(<span class="type">BT_UUID_HBSL</span>,
+                            <span class="type">BT_GATT_CHRC_READ</span>,
+                            <span class="type">BT_GATT_PERM_READ</span>,
+                            <span class="macro">NULL</span>, <span class="macro">NULL</span>, <span class="macro">NULL</span>),
+);
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">hr_notify</span>(<span class="kw">void</span>)
+{
+    <span class="kw">if</span> (!hr_notify_enabled) {
+        <span class="kw">return</span>;
+    }
+
+    <span class="type">uint8_t</span> meas[<span class="num">2</span>] = { <span class="num">0x00</span>, hr_value };
+    <span class="fn">bt_gatt_notify</span>(<span class="macro">NULL</span>, &amp;hr_svc.attrs[<span class="num">1</span>], meas, <span class="fn">sizeof</span>(meas));
+}
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">pm_state_exit</span>(<span class="kw">void</span>)
+{
+    <span class="cm">/* 唤醒后重新初始化外设 */</span>
+    <span class="fn">printk</span>(<span class="str">"从低功耗状态唤醒\n"</span>);
+}
+
+<span class="kw">int</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+    <span class="fn">bt_enable</span>(<span class="macro">NULL</span>);
+    <span class="fn">printk</span>(<span class="str">"可穿戴设备启动\n"</span>);
+
+    <span class="kw">while</span> (<span class="num">1</span>) {
+        <span class="cm">/* 1. 唤醒，采集心率 */</span>
+        hr_value = <span class="fn">read_heart_rate_sensor</span>();
+        <span class="fn">printk</span>(<span class="str">"心率: %d bpm\n"</span>, hr_value);
+
+        <span class="cm">/* 2. 通过 BLE 通知 */</span>
+        <span class="fn">hr_notify</span>();
+
+        <span class="cm">/* 3. 进入低功耗睡眠 */</span>
+        <span class="fn">k_msleep</span>(<span class="fn">HR_MEAS_INTERVAL_MS</span>);
+    }
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <div class="info-card">
+        <div class="info-card-title">低功耗设计要点</div>
+        <ul>
+          <li><strong>减少唤醒频率</strong>：心率不需要每秒监测，每 30~60 秒采集一次即可大幅省电</li>
+          <li><strong>快速完成工作</strong>：唤醒后尽快完成采集和发送，缩短活跃时间</li>
+          <li><strong>关闭不用的外设</strong>：睡眠前通过 <code>pm_device_action_run()</code> 关闭 I2C、ADC 等外设</li>
+          <li><strong>使用 BLE Connection Parameters</strong>：将连接间隔设为较长值（如 1 秒），减少射频唤醒次数</li>
+          <li><strong>选择合适的 PM 状态</strong>：nRF52 支持 System ON Idle、System OFF 等多种状态，根据延迟需求选择</li>
+        </ul>
+      </div>
+
+      <h2 id="ota-project">OTA 固件升级实战</h2>
+      <p>OTA（Over-The-Air）固件升级是物联网产品的<strong>刚需功能</strong>——没有 OTA，你就得派人到现场去刷固件，成本不可接受。Zephyr 通过 <strong>MCUboot</strong> 引导加载器 + <strong>SMP（Simple Management Protocol）</strong> 协议来实现安全可靠的 OTA 升级。</p>
+
+      <h3>OTA 升级原理</h3>
+      <p>MCUboot 采用<strong>双 Bank（A/B）方案</strong>：Flash 被划分为两个大小相同的 Slot——Slot 0 运行当前固件，Slot 1 存放新固件。升级流程如下：</p>
+      <ol>
+        <li>通过 SMP 协议将新固件传输到 Slot 1</li>
+        <li>MCUboot 验证 Slot 1 固件的签名</li>
+        <li>重启后 MCUboot 将 Slot 1 标记为待升级</li>
+        <li>MCUboot 将 Slot 1 的固件交换到 Slot 0（或直接从 Slot 1 启动）</li>
+        <li>新固件运行，确认升级成功后标记为"已确认"</li>
+        <li>如果新固件运行异常，重启后 MCUboot 自动回滚到旧固件</li>
+      </ol>
+
+      <h3>步骤一：配置 MCUboot</h3>
+      <p>首先在 <code>prj.conf</code> 中启用 MCUboot 和 SMP 服务：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">conf</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 启用 MCUboot</span>
+<span class="macro">CONFIG_BOOTLOADER_MCUBOOT</span>=y
+
+<span class="cm"># 启用 SMP 服务（用于固件传输）</span>
+<span class="macro">CONFIG_MCUMGR</span>=y
+<span class="macro">CONFIG_MCUMGR_SMP_BT</span>=y
+<span class="macro">CONFIG_MCUMGR_SMP_BT_AUTHEN</span>=n
+<span class="macro">CONFIG_MCUMGR_CMD_IMG_MGMT</span>=y
+<span class="macro">CONFIG_MCUMGR_CMD_OS_MGMT</span>=y
+
+<span class="cm"># BLE 配置</span>
+<span class="macro">CONFIG_BT</span>=y
+<span class="macro">CONFIG_BT_PERIPHERAL</span>=y
+<span class="macro">CONFIG_BT_DEVICE_NAME</span>=<span class="str">"OTA-Device"</span>
+
+<span class="cm"># Flash 分区</span>
+<span class="macro">CONFIG_FLASH</span>=y
+<span class="macro">CONFIG_FLASH_MAP</span>=y
+<span class="macro">CONFIG_STREAM_FLASH</span>=y
+
+<span class="cm"># 图片管理</span>
+<span class="macro">CONFIG_IMG_MANAGER</span>=y
+<span class="macro">CONFIG_IMG_ERASE_PROGRESSIVELY</span>=y</code></pre>
+      </div>
+
+      <h3>步骤二：配置 Flash 分区表</h3>
+      <p>MCUboot 需要知道 Flash 的分区布局。我们在设备树覆盖层中定义分区表：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">dts</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* boards/nrf52840dk_nrf52840.overlay */</span>
+&amp;<span class="fn">flash0</span> {
+    <span class="kw">partitions</span> {
+        <span class="kw">compatible</span> = <span class="str">"fixed-partitions"</span>;
+
+        <span class="fn">boot_partition</span>: partition@<span class="num">0</span> {
+            <span class="kw">label</span> = <span class="str">"mcuboot"</span>;
+            <span class="kw">reg</span> = &lt;<span class="num">0x00000000</span> <span class="num">0x0000C000</span>&gt;;
+        };
+        <span class="fn">slot0_partition</span>: partition@<span class="num">C000</span> {
+            <span class="kw">label</span> = <span class="str">"image-0"</span>;
+            <span class="kw">reg</span> = &lt;<span class="num">0x0000C000</span> <span class="num">0x00067000</span>&gt;;
+        };
+        <span class="fn">slot1_partition</span>: partition@<span class="num">73000</span> {
+            <span class="kw">label</span> = <span class="str">"image-1"</span>;
+            <span class="kw">reg</span> = &lt;<span class="num">0x00073000</span> <span class="num">0x00067000</span>&gt;;
+        };
+        <span class="fn">scratch_partition</span>: partition@<span class="num">DA000</span> {
+            <span class="kw">label</span> = <span class="str">"image-scratch"</span>;
+            <span class="kw">reg</span> = &lt;<span class="num">0x000DA000</span> <span class="num">0x0001D000</span>&gt;;
+        };
+        <span class="fn">storage_partition</span>: partition@<span class="num">F7000</span> {
+            <span class="kw">label</span> = <span class="str">"storage"</span>;
+            <span class="kw">reg</span> = &lt;<span class="num">0x000F7000</span> <span class="num">0x00008000</span>&gt;;
+        };
+    };
+};</code></pre>
+      </div>
+
+      <h3>步骤三：应用代码中确认升级</h3>
+      <p>新固件启动后，必须调用 <code>boot_write_img_confirmed()</code> 确认升级成功，否则 MCUboot 会在下次重启时自动回滚：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/kernel.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/dfu/mcuboot.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/logging/log.h&gt;</span>
+
+<span class="macro">LOG_MODULE_REGISTER</span>(main, <span class="type">LOG_LEVEL_INF</span>);
+
+<span class="kw">int</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+    <span class="type">bool</span> is_upgrade = <span class="fn">mcuboot_swap_type</span>() == <span class="type">BOOT_SWAP_TYPE_REVERT</span>;
+
+    <span class="kw">if</span> (is_upgrade) {
+        <span class="fn">LOG_INF</span>(<span class="str">"检测到 OTA 升级，运行自检..."</span>);
+
+        <span class="cm">/* 执行自检，确认新固件运行正常 */</span>
+        <span class="type">int</span> ret = <span class="fn">self_test</span>();
+        <span class="kw">if</span> (ret == <span class="num">0</span>) {
+            <span class="fn">boot_write_img_confirmed</span>();
+            <span class="fn">LOG_INF</span>(<span class="str">"OTA 升级已确认，回滚保护生效"</span>);
+        } <span class="kw">else</span> {
+            <span class="fn">LOG_ERR</span>(<span class="str">"自检失败！重启后将自动回滚"</span>);
+        }
+    }
+
+    <span class="cm">/* 正常应用逻辑 */</span>
+    <span class="kw">while</span> (<span class="num">1</span>) {
+        <span class="fn">k_sleep</span>(<span class="fn">K_SECONDS</span>(<span class="num">1</span>));
+    }
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <h3>步骤四：使用 mcumgr 推送固件</h3>
+      <p>在电脑端安装 mcumgr 命令行工具，通过 BLE 将新固件推送到设备：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 安装 mcumgr</span>
+<span class="fn">go</span> install github.com/apache/mynewt-mcumgr/cli/mcumgr@latest
+
+<span class="cm"># 连接设备（通过 BLE）</span>
+<span class="fn">mcumgr</span> --conntype ble --connstring peer_name=OTA-Device \
+    image list
+
+<span class="cm"># 上传新固件</span>
+<span class="fn">mcumgr</span> --conntype ble --connstring peer_name=OTA-Device \
+    image upload build/zephyr/app_update.bin
+
+<span class="cm"># 标记新固件为待升级</span>
+<span class="fn">mcumgr</span> --conntype ble --connstring peer_name=OTA-Device \
+    image test &lt;hash-of-new-image&gt;
+
+<span class="cm"># 重启设备，MCUboot 自动完成升级</span>
+<span class="fn">mcumgr</span> --conntype ble --connstring peer_name=OTA-Device \
+    reset</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>重要：</strong>上传固件时使用的是 <code>app_update.bin</code> 而不是 <code>zephyr.bin</code>。前者是经过 MCUboot 签名处理的固件包，后者是原始的裸二进制文件。构建时需要使用 <code>west build -t signed_bin</code> 或确保构建系统自动生成签名后的固件。</p>
+      </blockquote>
+
+      <div class="danger-card">
+        <p><strong>安全警告：</strong>生产环境中<strong>必须</strong>启用固件签名验证（<code>CONFIG_MCUBOOT_SIGNATURE_KEY_FILE</code>），否则任何人都可以推送恶意固件。MCUboot 支持 RSA 和 ECDSA 签名算法，推荐使用 ECDSA-P256 以减少签名开销。</p>
+      </div>
+
+      <h2 id="porting">自定义开发板移植</h2>
+      <p>当你的项目使用了一块 Zephyr 官方未支持的开发板时，就需要自己动手<strong>移植（Porting）</strong>。移植的本质就是告诉 Zephyr："这块板子用了什么芯片、引脚怎么连、有哪些外设"。听起来复杂，但只要按步骤来，其实并不难。</p>
+
+      <h3>移植步骤总览</h3>
+      <ol>
+        <li><strong>创建板级目录</strong>：在正确位置建立板级文件结构</li>
+        <li><strong>编写 board.yml</strong>：告诉构建系统这块板的基本信息</li>
+        <li><strong>创建 Pinmux 配置</strong>：定义引脚复用功能</li>
+        <li><strong>编写设备树文件</strong>：描述板上的硬件连接</li>
+        <li><strong>添加 Kconfig</strong>：提供板级配置选项</li>
+        <li><strong>测试与调试</strong>：编译、烧录、验证</li>
+      </ol>
+
+      <h3>步骤一：创建板级目录</h3>
+      <p>从 Zephyr 3.5 开始，自定义板放在应用的 <code>boards/</code> 目录下。目录命名规则为 <code>&lt;vendor&gt;/&lt;board_name&gt;</code>：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">text</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code>my-app/
+├── boards/
+│   └── mycompany/
+│       └── my_board/
+│           ├── board.yml            <span class="cm"># 板级描述文件</span>
+│           ├── my_board.dts         <span class="cm"># 设备树主文件</span>
+│           ├── my_board-pinctrl.dtsi <span class="cm"># 引脚控制</span>
+│           └── my_board_defconfig   <span class="cm"># 默认配置</span>
+├── CMakeLists.txt
+├── prj.conf
+└── src/
+    └── main.c</code></pre>
+      </div>
+
+      <h3>步骤二：编写 board.yml</h3>
+      <p><code>board.yml</code> 是板级的"身份证"，告诉 Zephyr 这块板的基本信息：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">yaml</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="kw">board:</span>
+  <span class="kw">name:</span> <span class="str">my_board</span>
+  <span class="kw">full_name:</span> <span class="str">My Company Custom Board</span>
+  <span class="kw">vendor:</span> <span class="str">mycompany</span>
+  <span class="kw">socs:</span>
+    <span class="kw">- name:</span> <span class="str">stm32f407xx</span></code></pre>
+      </div>
+
+      <h3>步骤三：编写设备树文件</h3>
+      <p>设备树是移植的核心。你需要描述板上的所有硬件连接——哪些引脚连了 LED、按钮、串口、I2C 总线等。通常先包含芯片级的设备树，然后在板级文件中补充板特有的配置：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">dts</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* my_board.dts */</span>
+/dts-v1/;
+
+<span class="macro">#include</span> <span class="str">&lt;st/f4/stm32f407Zg.dtsi&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;st/f4/stm32f407Zg-pinctrl.dtsi&gt;</span>
+<span class="macro">#include</span> <span class="str">"my_board-pinctrl.dtsi"</span>
+
+/ {
+    <span class="kw">model</span> = <span class="str">"My Company Custom Board"</span>;
+    <span class="kw">compatible</span> = <span class="str">"mycompany,my-board"</span>;
+
+    <span class="kw">chosen</span> {
+        <span class="fn">zephyr,console</span> = &amp;usart3;
+        <span class="fn">zephyr,shell-uart</span> = &amp;usart3;
+        <span class="fn">zephyr,sram</span> = &amp;sram0;
+        <span class="fn">zephyr,flash</span> = &amp;flash0;
+        <span class="fn">zephyr,ccm</span> = &amp;ccm0;
+    };
+
+    <span class="kw">leds</span> {
+        <span class="kw">compatible</span> = <span class="str">"gpio-leds"</span>;
+        <span class="fn">led0</span>: led_0 {
+            <span class="kw">gpios</span> = &amp;<span class="fn">gpiod</span>, <span class="num">12</span>, <span class="type">GPIO_ACTIVE_LOW</span>;
+            <span class="kw">label</span> = <span class="str">"Status LED"</span>;
+        };
+        <span class="fn">led1</span>: led_1 {
+            <span class="kw">gpios</span> = &amp;<span class="fn">gpiod</span>, <span class="num">13</span>, <span class="type">GPIO_ACTIVE_LOW</span>;
+            <span class="kw">label</span> = <span class="str">"Error LED"</span>;
+        };
+    };
+
+    <span class="kw">buttons</span> {
+        <span class="kw">compatible</span> = <span class="str">"gpio-keys"</span>;
+        <span class="fn">btn0</span>: button_0 {
+            <span class="kw">gpios</span> = &amp;<span class="fn">gpioc</span>, <span class="num">0</span>, <span class="type">GPIO_ACTIVE_LOW</span>;
+            <span class="kw">label</span> = <span class="str">"User Button"</span>;
+        };
+    };
+
+    <span class="kw">aliases</span> {
+        <span class="fn">led0</span> = &amp;led0;
+        <span class="fn">led1</span> = &amp;led1;
+        <span class="fn">sw0</span> = &amp;btn0;
+    };
+};
+
+<span class="cm">/* 启用板上的外设 */</span>
+&amp;usart3 {
+    <span class="kw">pinctrl-0</span> = &lt;&amp;usart3_default&gt;;
+    <span class="kw">pinctrl-names</span> = <span class="str">"default"</span>;
+    <span class="kw">current-speed</span> = &lt;<span class="num">115200</span>&gt;;
+    <span class="kw">status</span> = <span class="str">"okay"</span>;
+};
+
+&amp;i2c1 {
+    <span class="kw">pinctrl-0</span> = &lt;&amp;i2c1_default&gt;;
+    <span class="kw">pinctrl-names</span> = <span class="str">"default"</span>;
+    <span class="kw">status</span> = <span class="str">"okay"</span>;
+    <span class="kw">clock-frequency</span> = &lt;<span class="type">I2C_BITRATE_FAST</span>&gt;;
+};</code></pre>
+      </div>
+
+      <h3>步骤四：编写引脚控制文件</h3>
+      <p>引脚控制文件定义了每个外设使用的具体 GPIO 引脚和复用功能：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">dts</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* my_board-pinctrl.dtsi */</span>
+&amp;pinctrl {
+    <span class="fn">usart3_default</span>: usart3_default {
+        <span class="kw">group1</span> {
+            <span class="kw">pinmux</span> = &lt;<span class="type">STM32F4_PINMUX_FUNC_PD8_USART3_TX</span>&gt;;
+            <span class="kw">bias-disable</span>;
+            <span class="kw">drive-push-pull</span>;
+        };
+        <span class="kw">group2</span> {
+            <span class="kw">pinmux</span> = &lt;<span class="type">STM32F4_PINMUX_FUNC_PD9_USART3_RX</span>&gt;;
+            <span class="kw">bias-pull-up</span>;
+        };
+    };
+
+    <span class="fn">i2c1_default</span>: i2c1_default {
+        <span class="kw">group1</span> {
+            <span class="kw">pinmux</span> = &lt;<span class="type">STM32F4_PINMUX_FUNC_PB6_I2C1_SCL</span>,
+                     <span class="type">STM32F4_PINMUX_FUNC_PB7_I2C1_SDA</span>&gt;;
+            <span class="kw">bias-pull-up</span>;
+            <span class="kw">drive-open-drain</span>;
+        };
+    };
+};</code></pre>
+      </div>
+
+      <h3>步骤五：默认配置文件</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">conf</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># my_board_defconfig</span>
+<span class="macro">CONFIG_SOC_SERIES_STM32F4</span>=y
+<span class="macro">CONFIG_SOC_STM32F407XX</span>=y
+<span class="macro">CONFIG_BOARD_MY_BOARD</span>=y
+<span class="macro">CONFIG_SYSCLK_HW_ACTIVE_HZ</span>=<span class="num">168000000</span>
+<span class="macro">CONFIG_SERIAL</span>=y
+<span class="macro">CONFIG_CORTEX_M_SYSTICK</span>=y</code></pre>
+      </div>
+
+      <h3>步骤六：编译与测试</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 编译（指定自定义板）</span>
+<span class="fn">west</span> build -b mycompany/my_board -p
+
+<span class="cm"># 烧录</span>
+<span class="fn">west</span> flash
+
+<span class="cm"># 打开串口终端观察输出</span>
+<span class="fn">west</span> esptool --port COM3 monitor</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>调试技巧：</strong>如果板子没有任何输出，首先检查 <code>chosen</code> 节点中 <code>zephyr,console</code> 指向的串口是否正确，然后确认 pinctrl 中 TX/RX 引脚是否和原理图一致。90% 的移植问题都是引脚配置错误导致的。</p>
+      </blockquote>
+
+      <div class="tip-card">
+        <p><strong>快速移植捷径：</strong>如果你的板子和某个官方板使用相同的 SoC，最快的办法是复制官方板的目录，然后修改设备树中的引脚配置和外设差异。比如你的板子用的是 STM32F407，可以复制 <code>nucleo_f429zi</code> 的板级文件作为起点，只改不同的部分。站在巨人的肩膀上，事半功倍！</p>
+      </div>
+
+      <div class="info-card">
+        <div class="info-card-title">移植检查清单</div>
+        <ul>
+          <li>✅ board.yml 中的 SoC 名称与 Zephyr 支持的 SoC 匹配</li>
+          <li>✅ 设备树 <code>chosen</code> 节点正确指定了 console、sram、flash</li>
+          <li>✅ pinctrl 中所有引脚与原理图一致</li>
+          <li>✅ LED 和按钮的 GPIO 编号正确</li>
+          <li>✅ 时钟配置（HSE/HSI 频率、PLL 倍频系数）与硬件匹配</li>
+          <li>✅ 编译无错误，烧录后串口有输出</li>
+          <li>✅ GPIO、UART、I2C 等基本外设功能验证通过</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/assets/js/search-index.js"></script>
+  <script type="module" src="/assets/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>网络与通信 - Zephyr RTOS 中文知识库</title>
+  <link rel="stylesheet" href="/assets/css/main.css">
+</head>
+<body>
+  <div class="content-wrapper">
+    <div class="toc"></div>
+    <div class="content">
+      <h1>网络与通信</h1>
+      <p class="subtitle">全面掌握 Zephyr RTOS 的网络能力 —— 从协议栈架构到 Wi-Fi、BLE、MQTT、CoAP、HTTP、LoRaWAN、Thread、Socket 编程与网络安全</p>
+
+      <h2 id="stack">网络协议栈架构</h2>
+      <p>Zephyr 的网络协议栈采用<strong>分层架构</strong>设计，就像一个邮政系统：你写好信（应用数据），装进信封（TCP/UDP），贴上地址标签（IP），交给邮局（L2 链路层），邮局通过公路/铁路（物理介质）把信送到目的地。每一层只关心自己的职责，不需要了解上下的细节。</p>
+
+      <h3>协议栈层次</h3>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">Text</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code>┌─────────────────────────────────────┐
+│          应用层 (Application)         │  HTTP / MQTT / CoAP / DNS
+├─────────────────────────────────────┤
+│         传输层 (Transport)           │  TCP / UDP
+├─────────────────────────────────────┤
+│          网络层 (Network)            │  IPv4 / IPv6 / ICMP
+├─────────────────────────────────────┤
+│        链路层 (L2 / Link)            │  Ethernet / IEEE 802.15.4 / BLE
+├─────────────────────────────────────┤
+│         物理层 (Physical)            │  硬件驱动
+└─────────────────────────────────────┘</code></pre>
+      </div>
+
+      <h3>核心数据结构</h3>
+      <ul>
+        <li><strong>net_if</strong> — 网络接口，相当于"网卡"。每个网络接口对应一个物理或虚拟的网络设备，拥有自己的 IP 地址、MAC 地址和 MTU。一个设备可以同时拥有多个 net_if（比如同时有 Wi-Fi 和以太网）。</li>
+        <li><strong>net_pkt</strong> — 网络数据包，相当于"信件"。它是协议栈中数据传递的基本单位，包含了从 L2 到应用层的所有数据。net_pkt 内部使用 net_buf 链表来管理分散的内存片段，避免数据拷贝。</li>
+        <li><strong>net_context</strong> — 网络上下文，相当于"通信管道"。它封装了一个网络连接的所有状态信息（socket 地址、协议类型、回调函数等），是应用层与协议栈交互的桥梁。</li>
+      </ul>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>Zephyr 的网络协议栈默认使用 IPv6，同时也支持 IPv4 和双栈（IPv4/IPv6）模式。对于资源受限的 IoT 设备，推荐使用 IPv6 + 6LoWPAN 压缩，可以显著减少无线传输的开销。</p>
+      </blockquote>
+
+      <h2 id="wifi">Wi-Fi 连接管理</h2>
+      <p>Wi-Fi 是最常见的物联网联网方式。Zephyr 通过 <strong>net_mgmt</strong>（网络管理框架）来处理 Wi-Fi 事件，提供了一套统一的 API 来完成扫描、连接、断开等操作。你可以把 net_mgmt 想象成"Wi-Fi 的广播站"——它会在连接成功、断开、信号变化时广播通知，你的应用只需要"收听"这些通知即可。</p>
+
+      <h3>Wi-Fi 连接流程</h3>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="kw">static</span> <span class="kw">struct</span> <span class="type">net_mgmt_event_callback</span> mgmt_cb;
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">wifi_mgmt_event_handler</span>(<span class="kw">struct</span> <span class="type">net_mgmt_event_callback</span> *cb,
+                                     <span class="type">uint32_t</span> mgmt_event, <span class="kw">struct</span> <span class="type">net_if</span> *iface)
+{
+    <span class="kw">switch</span> (mgmt_event) {
+    <span class="kw">case</span> <span class="macro">NET_EVENT_WIFI_CONNECT_RESULT</span>:
+        <span class="fn">printk</span>(<span class="str">"Wi-Fi 已连接！\n"</span>);
+        <span class="kw">break</span>;
+    <span class="kw">case</span> <span class="macro">NET_EVENT_WIFI_DISCONNECT_RESULT</span>:
+        <span class="fn">printk</span>(<span class="str">"Wi-Fi 已断开！\n"</span>);
+        <span class="kw">break</span>;
+    <span class="kw">default</span>:
+        <span class="kw">break</span>;
+    }
+}
+
+<span class="kw">static</span> <span class="kw">int</span> <span class="fn">wifi_connect</span>(<span class="kw">void</span>)
+{
+    <span class="kw">struct</span> <span class="type">net_if</span> *iface = <span class="fn">net_if_get_default</span>();
+    <span class="kw">struct</span> <span class="type">wifi_connect_req_params</span> params = {
+        .ssid = <span class="str">"MyHomeWiFi"</span>,
+        .ssid_length = <span class="num">10</span>,
+        .psk = <span class="str">"password123"</span>,
+        .psk_length = <span class="num">11</span>,
+        .security = <span class="macro">WIFI_SECURITY_TYPE_PSK</span>,
+        .channel = <span class="macro">WIFI_CHANNEL_ANY</span>,
+    };
+
+    <span class="fn">net_mgmt_init_event_callback</span>(&amp;mgmt_cb, wifi_mgmt_event_handler,
+                                     <span class="macro">NET_EVENT_WIFI_CONNECT_RESULT</span> |
+                                     <span class="macro">NET_EVENT_WIFI_DISCONNECT_RESULT</span>);
+    <span class="fn">net_mgmt_add_event_callback</span>(&amp;mgmt_cb);
+
+    <span class="kw">if</span> (<span class="fn">net_mgmt</span>(<span class="macro">NET_REQUEST_WIFI_CONNECT</span>, iface,
+                  &amp;params, <span class="kw">sizeof</span>(params))) {
+        <span class="fn">printk</span>(<span class="str">"Wi-Fi 连接请求失败\n"</span>);
+        <span class="kw">return</span> -<span class="num">1</span>;
+    }
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <h3>Wi-Fi 扫描</h3>
+      <p>连接之前通常需要先扫描周围的 AP，获取可用的 SSID 列表和信号强度。通过 <code>NET_REQUEST_WIFI_SCAN</code> 发起扫描请求，扫描结果通过 <code>NET_EVENT_WIFI_SCAN_RESULT</code> 事件逐个返回。</p>
+
+      <blockquote>
+        <p><strong>注意：</strong>Wi-Fi 连接是异步操作。调用 <code>net_mgmt(NET_REQUEST_WIFI_CONNECT, ...)</code> 只是发起连接请求，实际连接结果需要通过事件回调获知。不要在发起连接后立即发送网络数据，一定要等到 <code>NET_EVENT_WIFI_CONNECT_RESULT</code> 事件。</p>
+      </blockquote>
+
+      <h2 id="ble">蓝牙低功耗 BLE</h2>
+      <p>BLE（Bluetooth Low Energy）是 IoT 领域最流行的短距离通信协议之一。Zephyr 拥有业界最完善的开源 BLE 协议栈实现。理解 BLE 的关键在于两个概念：<strong>GAP</strong>（通用访问规范）和 <strong>GATT</strong>（通用属性规范）。</p>
+
+      <h3>GAP：角色与广播</h3>
+      <p>GAP 定义了设备如何"发现"彼此和建立连接。BLE 广播就像<strong>在大街上喊出自己的手机号</strong>——你不停地广播自己的信息，感兴趣的人（扫描者）听到后就可以主动联系你。GAP 定义了四种角色：</p>
+      <ul>
+        <li><strong>外设（Peripheral）</strong>：广播自己，等待被连接（如心率手环）</li>
+        <li><strong>中心（Central）</strong>：扫描并主动发起连接（如手机）</li>
+        <li><strong>广播者（Broadcaster）</strong>：只广播，不可连接（如信标 Beacon）</li>
+        <li><strong>观察者（Observer）</strong>：只扫描，不连接（如温度采集器）</li>
+      </ul>
+
+      <h3>GATT：服务与特征</h3>
+      <p>GATT 定义了连接后数据如何组织。你可以把 GATT 想象成<strong>餐厅的菜单</strong>——菜单（Service）下面有多个菜品（Characteristic），每个菜品有名称（UUID）、口味描述（Descriptor）和价格（Value）。客户端可以点菜（Read）、改口味（Write）或者订阅新菜通知（Notify/Indicate）。</p>
+      <ul>
+        <li><strong>服务（Service）</strong>：一组相关特征的集合，用 UUID 标识</li>
+        <li><strong>特征（Characteristic）</strong>：实际的数据项，包含值和属性（可读/可写/可通知）</li>
+        <li><strong>描述符（Descriptor）</strong>：特征的元数据，如 CCCD（客户端特征配置描述符）用于开关通知</li>
+      </ul>
+
+      <h3>BLE 外设示例：自定义 GATT 服务</h3>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* 自定义服务 UUID */</span>
+<span class="kw">static</span> <span class="kw">struct</span> <span class="type">bt_uuid_128</span> my_service_uuid = <span class="macro">BT_UUID_INIT_128</span>(
+    <span class="num">0xf0</span>, <span class="num">0xde</span>, <span class="num">0xbc</span>, <span class="num">0x9a</span>, <span class="num">0x78</span>, <span class="num">0x56</span>, <span class="num">0x34</span>, <span class="num">0x12</span>,
+    <span class="num">0x78</span>, <span class="num">0x56</span>, <span class="num">0x34</span>, <span class="num">0x12</span>, <span class="num">0x78</span>, <span class="num">0x56</span>, <span class="num">0x34</span>, <span class="num">0x12</span>);
+
+<span class="kw">static</span> <span class="kw">struct</span> <span class="type">bt_uuid_128</span> temp_char_uuid = <span class="macro">BT_UUID_INIT_128</span>(
+    <span class="num">0xf1</span>, <span class="num">0xde</span>, <span class="num">0xbc</span>, <span class="num">0x9a</span>, <span class="num">0x78</span>, <span class="num">0x56</span>, <span class="num">0x34</span>, <span class="num">0x12</span>,
+    <span class="num">0x78</span>, <span class="num">0x56</span>, <span class="num">0x34</span>, <span class="num">0x12</span>, <span class="num">0x78</span>, <span class="num">0x56</span>, <span class="num">0x34</span>, <span class="num">0x12</span>);
+
+<span class="kw">static</span> <span class="type">ssize_t</span> <span class="fn">read_temp</span>(<span class="kw">struct</span> <span class="type">bt_conn</span> *conn,
+                       <span class="kw">const</span> <span class="kw">struct</span> <span class="type">bt_gatt_attr</span> *attr,
+                       <span class="kw">void</span> *buf, <span class="type">uint16_t</span> len,
+                       <span class="type">uint16_t</span> offset)
+{
+    <span class="type">int16_t</span> temp = <span class="num">2540</span>; <span class="cm">/* 25.40 °C */</span>
+    <span class="kw">return</span> <span class="fn">bt_gatt_attr_read</span>(conn, attr, buf, len, offset,
+                               &amp;temp, <span class="kw">sizeof</span>(temp));
+}
+
+<span class="macro">BT_GATT_SERVICE_DEFINE</span>(my_service,
+    <span class="macro">BT_GATT_PRIMARY_SERVICE</span>(&amp;my_service_uuid),
+    <span class="macro">BT_GATT_CHARACTERISTIC</span>(&amp;temp_char_uuid.uuid,
+        <span class="macro">BT_GATT_CHRC_READ</span> | <span class="macro">BT_GATT_CHRC_NOTIFY</span>,
+        <span class="macro">BT_GATT_PERM_READ</span>,
+        read_temp, <span class="macro">NULL</span>, <span class="macro">NULL</span>),
+    <span class="macro">BT_GATT_CCC</span>(ccc_changed,
+        <span class="macro">BT_GATT_PERM_READ</span> | <span class="macro">BT_GATT_PERM_WRITE</span>),
+);
+
+<span class="kw">static</span> <span class="kw">const</span> <span class="kw">struct</span> <span class="type">bt_data</span> ad[] = {
+    <span class="macro">BT_DATA_BYTES</span>(<span class="macro">BT_DATA_FLAGS</span>,
+                  (<span class="macro">BT_LE_AD_GENERAL</span> | <span class="macro">BT_LE_AD_NO_BREDR</span>)),
+    <span class="macro">BT_DATA_BYTES</span>(<span class="macro">BT_DATA_UUID128_ALL</span>,
+                  <span class="num">0xf0</span>, <span class="num">0xde</span>, <span class="num">0xbc</span>, <span class="num">0x9a</span>, <span class="num">0x78</span>, <span class="num">0x56</span>, <span class="num">0x34</span>, <span class="num">0x12</span>,
+                  <span class="num">0x78</span>, <span class="num">0x56</span>, <span class="num">0x34</span>, <span class="num">0x12</span>, <span class="num">0x78</span>, <span class="num">0x56</span>, <span class="num">0x34</span>, <span class="num">0x12</span>),
+};
+
+<span class="kw">void</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+    <span class="fn">bt_enable</span>(<span class="macro">NULL</span>);
+    <span class="fn">bt_le_adv_start</span>(<span class="macro">BT_LE_ADV_CONN_NAME</span>, ad, <span class="macro">ARRAY_SIZE</span>(ad),
+                      <span class="macro">NULL</span>, <span class="num">0</span>);
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>BLE 数据包最大载荷只有 20 字节（默认 MTU）。如果需要传输更多数据，可以协商更大的 MTU（<code>bt_gatt_exchange_mtu()</code>），或使用 L2CAP 面向连接通道。Zephyr 3.x 默认支持扩展广播和 PHY 2M，可以显著提高吞吐量。</p>
+      </blockquote>
+
+      <h2 id="mqtt">MQTT 协议客户端</h2>
+      <p>MQTT 是物联网领域最广泛使用的应用层协议。你可以把 MQTT 想象成<strong>报纸订阅系统</strong>——出版社（发布者）把报纸投递到报社（Broker），报社根据订阅名单把报纸分发给各个订户（订阅者）。发布者和订阅者互不认识，完全通过 Broker 中转，这就是经典的<strong>发布/订阅模式</strong>。</p>
+
+      <h3>QoS 服务等级</h3>
+      <table class="comparison-table">
+        <tr>
+          <th>QoS 等级</th>
+          <th>说明</th>
+          <th>可靠性</th>
+          <th>开销</th>
+        </tr>
+        <tr>
+          <td>QoS 0</td>
+          <td>至多一次（发完即忘）</td>
+          <td>最低，可能丢失</td>
+          <td>最小</td>
+        </tr>
+        <tr>
+          <td>QoS 1</td>
+          <td>至少一次（需确认）</td>
+          <td>较高，可能重复</td>
+          <td>中等</td>
+        </tr>
+        <tr>
+          <td>QoS 2</td>
+          <td>恰好一次（四次握手）</td>
+          <td>最高，不丢不重</td>
+          <td>最大</td>
+        </tr>
+      </table>
+
+      <h3>MQTT 发布温度数据</h3>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="kw">static</span> <span class="kw">struct</span> <span class="type">mqtt_client</span> client;
+<span class="kw">static</span> <span class="type">uint8_t</span> rx_buffer[<span class="num">256</span>];
+<span class="kw">static</span> <span class="type">uint8_t</span> tx_buffer[<span class="num">256</span>];
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">mqtt_evt_handler</span>(<span class="kw">struct</span> <span class="type">mqtt_client</span> *cli,
+                                <span class="kw">const</span> <span class="kw">struct</span> <span class="type">mqtt_evt</span> *evt)
+{
+    <span class="kw">switch</span> (evt->type) {
+    <span class="kw">case</span> <span class="macro">MQTT_EVT_CONNACK</span>:
+        <span class="fn">printk</span>(<span class="str">"MQTT 连接成功！\n"</span>);
+        <span class="kw">break</span>;
+    <span class="kw">case</span> <span class="macro">MQTT_EVT_PUBLISH</span>:
+        <span class="fn">printk</span>(<span class="str">"收到订阅消息\n"</span>);
+        <span class="kw">break</span>;
+    <span class="kw">case</span> <span class="macro">MQTT_EVT_DISCONNECT</span>:
+        <span class="fn">printk</span>(<span class="str">"MQTT 已断开\n"</span>);
+        <span class="kw">break</span>;
+    <span class="kw">default</span>:
+        <span class="kw">break</span>;
+    }
+}
+
+<span class="kw">static</span> <span class="kw">int</span> <span class="fn">mqtt_publish_temp</span>(<span class="type">float</span> temperature)
+{
+    <span class="kw">struct</span> <span class="type">mqtt_publish_param</span> pub = {
+        .message.topic.topic = {
+            .utf8 = <span class="str">"sensors/temperature"</span>,
+            .size = <span class="kw">sizeof</span>(<span class="str">"sensors/temperature"</span>) - <span class="num">1</span>,
+        },
+        .message.topic.qos = <span class="macro">MQTT_QOS_1_AT_LEAST_ONCE</span>,
+        .message.payload.data = <span class="macro">NULL</span>,
+        .message.payload.len = <span class="num">0</span>,
+        .message_id = <span class="fn">sys_rand16_get</span>(),
+    };
+
+    <span class="kw">char</span> payload[<span class="num">32</span>];
+    <span class="type">int</span> len = <span class="fn">snprintf</span>(payload, <span class="kw">sizeof</span>(payload),
+                         <span class="str">"{\"temp\":%.1f}"</span>, temperature);
+    pub.message.payload.data = payload;
+    pub.message.payload.len = len;
+
+    <span class="kw">return</span> <span class="fn">mqtt_publish</span>(&amp;client, &amp;pub);
+}
+
+<span class="kw">static</span> <span class="kw">int</span> <span class="fn">mqtt_connect_to_broker</span>(<span class="kw">void</span>)
+{
+    <span class="fn">mqtt_client_init</span>(&amp;client);
+
+    <span class="kw">struct</span> <span class="type">sockaddr_in</span> broker = {
+        .sin_family = <span class="macro">AF_INET</span>,
+        .sin_port = <span class="fn">htons</span>(<span class="num">1883</span>),
+    };
+    <span class="fn">zsock_inet_pton</span>(<span class="macro">AF_INET</span>, <span class="str">"192.168.1.100"</span>, &amp;broker.sin_addr);
+
+    <span class="fn">mqtt_client_set_broker</span>(&amp;client, <span class="kw">sizeof</span>(broker));
+    client.broker = (<span class="kw">struct</span> <span class="type">sockaddr</span> *)&amp;broker;
+    client.evt_cb = mqtt_evt_handler;
+    client.client_id.utf8 = <span class="str">"zephyr_sensor"</span>;
+    client.client_id.size = <span class="kw">sizeof</span>(<span class="str">"zephyr_sensor"</span>) - <span class="num">1</span>;
+    client.rx_buf = rx_buffer;
+    client.rx_buf_size = <span class="kw">sizeof</span>(rx_buffer);
+    client.tx_buf = tx_buffer;
+    client.tx_buf_size = <span class="kw">sizeof</span>(tx_buffer);
+
+    <span class="kw">return</span> <span class="fn">mqtt_connect</span>(&amp;client);
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>注意：</strong>MQTT 客户端需要应用层定期调用 <code>mqtt_input()</code> 处理接收数据和 <code>mqtt_live()</code> 维持心跳。通常的做法是在一个独立线程中循环调用这两个函数，或者使用 <code>poll()</code> 监听 socket 可读事件后再调用。</p>
+      </blockquote>
+
+      <h2 id="coap">CoAP 协议</h2>
+      <p>CoAP（Constrained Application Protocol）是专为资源受限设备设计的 Web 协议。你可以把 CoAP 理解为<strong>"轻量版 HTTP"</strong>——它同样使用 RESTful 风格（GET/PUT/POST/DELETE），但运行在 UDP 而非 TCP 之上，报文头仅 4 字节（HTTP 头动辄数百字节），非常适合电池供电的 IoT 设备。</p>
+
+      <h3>CoAP 核心特性</h3>
+      <ul>
+        <li><strong>RESTful 方法</strong>：GET（读取）、POST（创建/触发）、PUT（更新）、DELETE（删除）</li>
+        <li><strong>观察模式（Observe）</strong>：类似 MQTT 的订阅，客户端可以"观察"一个资源，服务端在资源变化时主动推送通知</li>
+        <li><strong>确认/非确认消息</strong>：CON（需要确认）和 NON（不需要确认），灵活权衡可靠性与开销</li>
+        <li><strong>块传输</strong>：支持分块传输大数据，不需要一次性装进小数据包</li>
+      </ul>
+
+      <h3>CoAP GET 请求示例</h3>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="kw">static</span> <span class="kw">int</span> <span class="fn">coap_get_request</span>(<span class="kw">void</span>)
+{
+    <span class="kw">struct</span> <span class="type">coap_packet</span> request;
+    <span class="kw">struct</span> <span class="type">coap_packet</span> response;
+    <span class="kw">const</span> <span class="type">uint8_t</span> *payload;
+    <span class="type">uint16_t</span> payload_len;
+    <span class="type">uint8_t</span> token[<span class="num">8</span>];
+    <span class="type">uint8_t</span> token_len = <span class="num">2</span>;
+
+    <span class="fn">coap_packet_init</span>(&amp;request, <span class="macro">COAP_VERSION</span>,
+                      <span class="macro">COAP_TYPE_CON</span>, <span class="num">8</span>,
+                      <span class="macro">COAP_METHOD_GET</span>,
+                      token, token_len,
+                      <span class="fn">coap_next_id</span>());
+
+    <span class="fn">coap_packet_append_option</span>(&amp;request, <span class="macro">COAP_OPTION_URI_PATH</span>,
+                               <span class="str">"sensors/temp"</span>,
+                               <span class="kw">sizeof</span>(<span class="str">"sensors/temp"</span>) - <span class="num">1</span>);
+
+    <span class="cm">/* 发送请求并等待响应 */</span>
+    <span class="fn">coap_send_request</span>(&amp;request, &amp;remote_addr);
+
+    <span class="cm">/* 接收响应 */</span>
+    <span class="fn">coap_receive</span>(&amp;response);
+    payload = <span class="fn">coap_packet_get_payload</span>(&amp;response, &amp;payload_len);
+    <span class="fn">printk</span>(<span class="str">"温度: %.*s\n"</span>, payload_len, payload);
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>CoAP 默认端口是 5683（UDP），DTLS 加密端口是 5684。在公网部署时务必启用 DTLS，否则数据明文传输非常不安全。</p>
+      </blockquote>
+
+      <h2 id="http">HTTP 客户端/服务端</h2>
+      <p>HTTP 是互联网最基础的协议，Zephyr 同时提供了 HTTP 客户端和服务端实现。HTTP 客户端用于设备向云端上报数据或调用 REST API，HTTP 服务端则让设备本身成为一个可被访问的 Web 服务。</p>
+
+      <h3>HTTP 客户端 GET 请求</h3>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="kw">static</span> <span class="type">uint8_t</span> recv_buf[<span class="num">1024</span>];
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">http_response_cb</span>(<span class="kw">struct</span> <span class="type">http_response</span> *resp,
+                              <span class="kw">enum</span> <span class="type">http_final_call</span> final_data,
+                              <span class="type">void</span> *user_data)
+{
+    <span class="fn">printk</span>(<span class="str">"HTTP 状态码: %d\n"</span>, resp->http_status);
+    <span class="fn">printk</span>(<span class="str">"响应体: %.*s\n"</span>, resp->body_frag_len, resp->body_frag_start);
+}
+
+<span class="kw">static</span> <span class="kw">int</span> <span class="fn">http_get_request</span>(<span class="kw">void</span>)
+{
+    <span class="kw">struct</span> <span class="type">http_request</span> req = {
+        .method = <span class="macro">HTTP_GET</span>,
+        .url = <span class="str">"/api/v1/temperature"</span>,
+        .host = <span class="str">"weather.example.com"</span>,
+        .protocol = <span class="str">"HTTP/1.1"</span>,
+    };
+
+    <span class="kw">struct</span> <span class="type">http_client_ctx</span> ctx = {
+        .recv_buf = recv_buf,
+        .recv_buf_len = <span class="kw">sizeof</span>(recv_buf),
+    };
+
+    <span class="kw">return</span> <span class="fn">http_client_req</span>(&amp;ctx, &amp;req, <span class="num">5000</span>, http_response_cb);
+}</code></pre>
+      </div>
+
+      <h3>HTTP 服务端</h3>
+      <p>Zephyr 的 HTTP 服务端支持 REST API 路由，可以为设备提供配置页面或数据接口。通过 <code>http_server_add_url()</code> 注册 URL 路径和回调函数，支持 GET、POST、PUT、DELETE 等方法。适合在局域网内对设备进行 Web 管理的场景。</p>
+
+      <blockquote>
+        <p><strong>注意：</strong>HTTP 基于 TCP，开销较大。对于带宽受限或电池供电的设备，优先考虑 CoAP 或 MQTT。HTTP 更适合有稳定电源和充足带宽的网关类设备。</p>
+      </blockquote>
+
+      <h2 id="lorawan">LoRaWAN 通信</h2>
+      <p>LoRaWAN 是一种<strong>远距离、低功耗</strong>的广域网通信技术，传输距离可达数公里，非常适合智能农业、智慧城市等场景。你可以把 LoRaWAN 想象成<strong>"大喇叭广播"</strong>——你用很小的力气喊一声，方圆几公里都能听到，但每次只能喊很短的内容。</p>
+
+      <h3>LoRaWAN 设备类别</h3>
+      <table class="comparison-table">
+        <tr>
+          <th>类别</th>
+          <th>上行</th>
+          <th>下行</th>
+          <th>功耗</th>
+          <th>适用场景</th>
+        </tr>
+        <tr>
+          <td>Class A</td>
+          <td>任意时刻</td>
+          <td>仅在上行后短暂窗口</td>
+          <td>最低</td>
+          <td>传感器上报（最常用）</td>
+        </tr>
+        <tr>
+          <td>Class B</td>
+          <td>任意时刻</td>
+          <td>定时信标窗口</td>
+          <td>中等</td>
+          <td>需要定时下行的场景</td>
+        </tr>
+        <tr>
+          <td>Class C</td>
+          <td>任意时刻</td>
+          <td>持续监听</td>
+          <td>最高</td>
+          <td>常供电的网关/执行器</td>
+        </tr>
+      </table>
+
+      <h3>入网与数据发送</h3>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* prj.conf 配置 */</span>
+<span class="cm">/* CONFIG_LORAWAN=y */</span>
+<span class="cm">/* CONFIG_LORAWAN_CLASS_A=y */</span>
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">lorawan_datarate_changed</span>(<span class="kw">enum</span> <span class="type">lorawan_datarate</span> dr)
+{
+    <span class="fn">printk</span>(<span class="str">"数据速率变更为 DR_%d\n"</span>, dr);
+}
+
+<span class="kw">static</span> <span class="kw">int</span> <span class="fn">lorawan_send_data</span>(<span class="kw">void</span>)
+{
+    <span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *lora_dev = <span class="macro">DEVICE_DT_GET</span>(<span class="macro">DT_ALIAS</span>(lora0));
+    <span class="kw">struct</span> <span class="type">lorawan_join_config</span> join_cfg = {
+        .dev_eui = { <span class="num">0x01</span>, <span class="num">0x02</span>, <span class="num">0x03</span>, <span class="num">0x04</span>,
+                     <span class="num">0x05</span>, <span class="num">0x06</span>, <span class="num">0x07</span>, <span class="num">0x08</span> },
+        .app_eui = { <span class="num">0x11</span>, <span class="num">0x22</span>, <span class="num">0x33</span>, <span class="num">0x44</span>,
+                     <span class="num">0x55</span>, <span class="num">0x66</span>, <span class="num">0x77</span>, <span class="num">0x88</span> },
+        .app_key = { <span class="num">0xAA</span>, <span class="num">0xBB</span>, <span class="num">0xCC</span>, <span class="num">0xDD</span>,
+                     <span class="num">0xEE</span>, <span class="num">0xFF</span>, <span class="num">0x00</span>, <span class="num">0x11</span>,
+                     <span class="num">0x22</span>, <span class="num">0x33</span>, <span class="num">0x44</span>, <span class="num">0x55</span>,
+                     <span class="num">0x66</span>, <span class="num">0x77</span>, <span class="num">0x88</span>, <span class="num">0x99</span> },
+    };
+
+    <span class="fn">lorawan_start</span>(lora_dev);
+    <span class="fn">lorawan_set_datarate</span>(<span class="macro">LORAWAN_DR_0</span>);
+    <span class="fn">lorawan_set_adr</span>(<span class="kw">true</span>);
+
+    <span class="fn">printk</span>(<span class="str">"正在加入 LoRaWAN 网络 (OTAA)...\n"</span>);
+    <span class="kw">if</span> (<span class="fn">lorawan_join</span>(&amp;join_cfg)) {
+        <span class="fn">printk</span>(<span class="str">"入网失败！\n"</span>);
+        <span class="kw">return</span> -<span class="num">1</span>;
+    }
+    <span class="fn">printk</span>(<span class="str">"入网成功！\n"</span>);
+
+    <span class="type">uint8_t</span> data[] = { <span class="num">0x01</span>, <span class="num">0x09</span>, <span class="num">0xF4</span> }; <span class="cm">/* 温度 25.40°C */</span>
+    <span class="kw">return</span> <span class="fn">lorawan_send</span>(data, <span class="kw">sizeof</span>(data), <span class="num">2</span>, <span class="kw">false</span>);
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>LoRaWAN 有两种入网方式：<strong>OTAA</strong>（Over-The-Air Activation，空中激活）更安全，设备通过 AppKey 与网络服务器协商会话密钥；<strong>ABP</strong>（Activation By Personalization，预置激活）直接写入会话密钥，部署简单但安全性较低。生产环境推荐 OTAA。</p>
+      </blockquote>
+
+      <h2 id="thread">Thread/OpenThread 网状网络</h2>
+      <p>Thread 是一种基于 IEEE 802.15.4 的<strong>低功耗网状网络</strong>协议，由 Google Nest、Apple、Samsung 等巨头联合推动。你可以把 Thread 网络想象成<strong>"蚂蚁群落"</strong>——每只蚂蚁（节点）都能通过信息素（路由）找到食物（目标节点），即使某条路径断了，蚂蚁们也能自动找到新路径。这种自愈能力是网状网络最大的优势。</p>
+
+      <h3>Thread 核心概念</h3>
+      <ul>
+        <li><strong>IEEE 802.15.4</strong>：Thread 的物理层和 MAC 层标准，工作在 2.4GHz 或 Sub-GHz 频段，低功耗短距离通信</li>
+        <li><strong>网状拓扑</strong>：节点之间可以互相中继数据，扩大覆盖范围，单点故障不影响整个网络</li>
+        <li><strong>Border Router</strong>：Thread 网络与 IP 网络（如 Wi-Fi/以太网）之间的桥梁，让 Thread 设备可以被互联网访问</li>
+        <li><strong>OpenThread</strong>：Google 开源的 Thread 协议栈实现，Zephyr 已集成 OpenThread 作为其 Thread 协议栈</li>
+      </ul>
+
+      <h3>Thread 设备角色</h3>
+      <ul>
+        <li><strong>Router</strong>：全功能路由节点，可以转发数据，维护路由表</li>
+        <li><strong>End Device</strong>：终端设备，通过父节点（Router）通信，低功耗休眠</li>
+        <li><strong>Sleepy End Device (SED)</strong>：休眠终端设备，大部分时间在休眠，定期唤醒接收数据</li>
+        <li><strong>Border Router</strong>：边界路由器，连接 Thread 网络与外部 IP 网络</li>
+      </ul>
+
+      <blockquote>
+        <p><strong>注意：</strong>Thread 和 Zigbee 都基于 IEEE 802.15.4，但 Thread 原生支持 IPv6（通过 6LoWPAN），而 Zigbee 使用自己的应用层协议。Thread 更适合需要与互联网无缝集成的 IoT 场景。Matter 协议（原 CHIP 项目）使用 Thread 作为低功耗设备的传输层。</p>
+      </blockquote>
+
+      <h2 id="socket">Socket 编程接口</h2>
+      <p>Zephyr 实现了<strong>POSIX 兼容的 BSD Socket API</strong>，让有 Linux 网络编程经验的开发者可以无缝迁移。所有 socket 函数都有 <code>zsock_</code> 前缀版本（如 <code>zsock_socket()</code>、<code>zsock_connect()</code>），同时通过 <code>CONFIG_POSIX_API</code> 可以直接使用标准名称（<code>socket()</code>、<code>connect()</code> 等）。</p>
+
+      <h3>Socket API 速查</h3>
+      <table class="comparison-table">
+        <tr>
+          <th>函数</th>
+          <th>说明</th>
+          <th>对应 zsock_ 前缀</th>
+        </tr>
+        <tr>
+          <td><code>socket()</code></td>
+          <td>创建 socket</td>
+          <td><code>zsock_socket()</code></td>
+        </tr>
+        <tr>
+          <td><code>bind()</code></td>
+          <td>绑定地址和端口</td>
+          <td><code>zsock_bind()</code></td>
+        </tr>
+        <tr>
+          <td><code>listen()</code></td>
+          <td>开始监听连接</td>
+          <td><code>zsock_listen()</code></td>
+        </tr>
+        <tr>
+          <td><code>accept()</code></td>
+          <td>接受新连接</td>
+          <td><code>zsock_accept()</code></td>
+        </tr>
+        <tr>
+          <td><code>connect()</code></td>
+          <td>发起连接</td>
+          <td><code>zsock_connect()</code></td>
+        </tr>
+        <tr>
+          <td><code>send()</code></td>
+          <td>发送数据</td>
+          <td><code>zsock_send()</code></td>
+        </tr>
+        <tr>
+          <td><code>recv()</code></td>
+          <td>接收数据</td>
+          <td><code>zsock_recv()</code></td>
+        </tr>
+        <tr>
+          <td><code>close()</code></td>
+          <td>关闭 socket</td>
+          <td><code>zsock_close()</code></td>
+        </tr>
+        <tr>
+          <td><code>poll()</code></td>
+          <td>多路复用 I/O</td>
+          <td><code>zsock_poll()</code></td>
+        </tr>
+      </table>
+
+      <h3>TCP 客户端示例</h3>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="kw">static</span> <span class="kw">int</span> <span class="fn">tcp_client</span>(<span class="kw">void</span>)
+{
+    <span class="type">int</span> sock = <span class="fn">zsock_socket</span>(<span class="macro">AF_INET</span>, <span class="macro">SOCK_STREAM</span>, <span class="macro">IPPROTO_TCP</span>);
+    <span class="kw">if</span> (sock &lt; <span class="num">0</span>) {
+        <span class="fn">printk</span>(<span class="str">"创建 socket 失败\n"</span>);
+        <span class="kw">return</span> -<span class="num">1</span>;
+    }
+
+    <span class="kw">struct</span> <span class="type">sockaddr_in</span> server = {
+        .sin_family = <span class="macro">AF_INET</span>,
+        .sin_port = <span class="fn">htons</span>(<span class="num">8080</span>),
+    };
+    <span class="fn">zsock_inet_pton</span>(<span class="macro">AF_INET</span>, <span class="str">"192.168.1.100"</span>, &amp;server.sin_addr);
+
+    <span class="kw">if</span> (<span class="fn">zsock_connect</span>(sock, (<span class="kw">struct</span> <span class="type">sockaddr</span> *)&amp;server,
+                       <span class="kw">sizeof</span>(server)) &lt; <span class="num">0</span>) {
+        <span class="fn">printk</span>(<span class="str">"连接服务器失败\n"</span>);
+        <span class="fn">zsock_close</span>(sock);
+        <span class="kw">return</span> -<span class="num">1</span>;
+    }
+
+    <span class="kw">const</span> <span class="kw">char</span> *msg = <span class="str">"Hello from Zephyr!\n"</span>;
+    <span class="fn">zsock_send</span>(sock, msg, <span class="fn">strlen</span>(msg), <span class="num">0</span>);
+
+    <span class="type">char</span> buf[<span class="num">128</span>];
+    <span class="type">ssize_t</span> len = <span class="fn">zsock_recv</span>(sock, buf, <span class="kw">sizeof</span>(buf) - <span class="num">1</span>, <span class="num">0</span>);
+    <span class="kw">if</span> (len &gt; <span class="num">0</span>) {
+        buf[len] = <span class="str">'\0'</span>;
+        <span class="fn">printk</span>(<span class="str">"收到: %s\n"</span>, buf);
+    }
+
+    <span class="fn">zsock_close</span>(sock);
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>使用 <code>zsock_poll()</code> 可以同时监听多个 socket 的可读/可写事件，避免为每个连接创建独立线程。这是构建高性能网络服务（如多客户端 TCP 服务器）的推荐方式。</p>
+      </blockquote>
+
+      <h2 id="security">网络安全 TLS/DTLS</h2>
+      <p>在物联网时代，网络安全不再是可选项而是必选项。Zephyr 集成了 <strong>mbedTLS</strong> 库，提供完整的 TLS/DTLS 支持，让你的设备通信固若金汤。</p>
+
+      <h3>TLS vs DTLS</h3>
+      <ul>
+        <li><strong>TLS（Transport Layer Security）</strong>：保护 TCP 连接，如 HTTPS、MQTT over TLS。TLS 1.2 是当前最广泛部署的版本，TLS 1.3 提供更快的握手和更强的安全性</li>
+        <li><strong>DTLS（Datagram TLS）</strong>：保护 UDP 连接，如 CoAP over DTLS。DTLS 在 UDP 之上增加了重传和排序机制，确保加密握手可靠完成</li>
+      </ul>
+
+      <h3>证书管理</h3>
+      <p>TLS/DTLS 的核心是证书体系。Zephyr 支持以下证书管理方式：</p>
+      <ul>
+        <li><strong>CA 证书</strong>：用于验证服务器身份，通常烧录到设备固件中</li>
+        <li><strong>设备证书/私钥</strong>：用于双向认证（mTLS），每个设备拥有唯一的证书和私钥</li>
+        <li><strong>PSK（预共享密钥）</strong>：对称密钥方案，开销更小，适合资源受限设备</li>
+      </ul>
+
+      <h3>prj.conf 安全配置</h3>
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">Conf</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 启用 TLS 支持</span>
+<span class="macro">CONFIG_MBEDTLS</span>=y
+<span class="macro">CONFIG_MBEDTLS_BUILTIN</span>=y
+
+<span class="cm"># TLS 1.2（默认启用）</span>
+<span class="macro">CONFIG_MBEDTLS_TLS_VERSION_1_2</span>=y
+
+<span class="cm"># TLS 1.3（可选，更安全更快）</span>
+<span class="macro">CONFIG_MBEDTLS_TLS_VERSION_1_3</span>=y
+
+<span class="cm"># DTLS 支持（用于 CoAP 等 UDP 协议）</span>
+<span class="macro">CONFIG_MBEDTLS_DTLS</span>=y
+
+<span class="cm"># 启用证书验证</span>
+<span class="macro">CONFIG_MBEDTLS_X509</span>=y
+<span class="macro">CONFIG_MBEDTLS_CERTIFICATE_C</span>=y
+
+<span class="cm"># 网络层 TLS 集成</span>
+<span class="macro">CONFIG_NET_SOCKETS_TLS</span>=y
+<span class="macro">CONFIG_NET_SOCKETS_TLS_MAX_CONTEXTS</span>=<span class="num">4</span>
+
+<span class="cm"># 内存优化：按需裁剪密码套件</span>
+<span class="macro">CONFIG_MBEDTLS_CIPHER_AES_ENABLED</span>=y
+<span class="macro">CONFIG_MBEDTLS_CIPHER_GCM_ENABLED</span>=y
+<span class="macro">CONFIG_MBEDTLS_ECP_C</span>=y
+<span class="macro">CONFIG_MBEDTLS_ECDHE_ENABLED</span>=y</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>安全警告：</strong>切勿将私钥硬编码在源代码中！生产环境应使用安全存储（如 TrustZone、SE05X 等 HSM 模块）保护私钥。开发阶段可以使用 PSA Protected Storage 或 Kconfig 的 PEM 文件加载方式。</p>
+      </blockquote>
+
+      <div class="info-card tip-card">
+        <div class="info-card-title">网络与通信知识速查</div>
+        <p>协议栈是邮政系统，Wi-Fi 用 net_mgmt 收听事件，BLE 广播像喊手机号，MQTT 像报纸订阅，CoAP 是轻量版 HTTP，LoRaWAN 是大喇叭广播，Thread 像蚂蚁群落，Socket 是 POSIX 老朋友，TLS 是通信保险箱——理解了这些类比，Zephyr 网络开发就不再神秘！</p>
+      </div>
+
+    </div>
+  </div>
+  <script type="module" src="/assets/js/search-index.js"></script>
+  <script type="module" src="/assets/js/main.js"></script>
+</body>
+</html>

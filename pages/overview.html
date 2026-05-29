@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>入门概览 - Zephyr RTOS 中文知识库</title>
+  <link rel="stylesheet" href="/assets/css/main.css">
+</head>
+<body>
+  <div class="content-wrapper">
+    <div class="toc"></div>
+    <div class="content">
+      <h1>入门概览</h1>
+      <p class="subtitle">从零认识 Zephyr RTOS —— 它是什么、能做什么、为什么值得学</p>
+
+      <h2 id="what-is-zephyr">什么是 Zephyr RTOS</h2>
+      <p>想象一下：你的智能手表只有 64KB 内存，却要同时管理蓝牙连接、心率传感器和屏幕刷新——这时候 Linux 跑不动，裸机写又太痛苦，你需要的就是一个<strong>实时操作系统（RTOS）</strong>。而 Zephyr，正是这个领域的佼佼者。</p>
+      <p><strong>Zephyr RTOS</strong> 是由 <strong>Linux 基金会</strong>主导开发的开源实时操作系统，专门为资源受限的物联网（IoT）设备而生。它就像一个"微型 Linux"——虽然体积小，但架构设计、驱动模型、配置体系都借鉴了 Linux 的成熟理念，让你在 MCU 上也能享受到接近 Linux 的开发体验。</p>
+      <p>自 2016 年项目启动以来，Zephyr 已经发展到了 <strong>v4.x</strong> 版本，支持超过 <strong>700+ 款开发板</strong>，拥有完整的网络协议栈、安全框架和丰富的驱动生态。无论你是在做一个简单的温度传感器，还是复杂的工业网关，Zephyr 都能胜任。</p>
+
+      <div class="info-card">
+        <div class="info-card-title">📌 一句话理解 Zephyr</div>
+        <p>Zephyr = 小体积 + 大生态 + Linux 基因。它是物联网世界的"瑞士军刀"，小巧但功能齐全。</p>
+      </div>
+
+      <p>来看一个最简单的 Zephyr 程序，感受一下它的代码风格：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/kernel.h&gt;</span>
+
+<span class="type">int</span> <span class="fn">main</span>(<span class="type">void</span>)
+{
+    <span class="fn">printk</span>(<span class="str">"Hello, Zephyr! 🌊\n"</span>);
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <p>是不是和 C 语言入门的 Hello World 一样简单？没错，Zephyr 的上手门槛并不高。但别被这个简单的例子骗了——它的底层架构远比看起来要精巧得多。</p>
+
+      <h2 id="comparison">Zephyr vs FreeRTOS vs RT-Thread</h2>
+      <p>当你选择一个 RTOS 时，最常被拿来比较的就是这三家。它们各有侧重，就像选车一样：有人要省油（轻量），有人要空间（功能全），有人要品牌背书（生态）。下面这张表帮你快速看清它们的区别：</p>
+
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>对比维度</th>
+            <th>Zephyr</th>
+            <th>FreeRTOS</th>
+            <th>RT-Thread</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>定位</strong></td>
+            <td>面向 IoT 的全功能 RTOS，Linux 基金会项目</td>
+            <td>极简实时内核，专注任务调度</td>
+            <td>国产 RTOS，面向中国开发者生态</td>
+          </tr>
+          <tr>
+            <td><strong>配置系统</strong></td>
+            <td>Kconfig（与 Linux 同源）+ 设备树</td>
+            <td>FreeRTOSConfig.h 手动宏定义</td>
+            <td>Env 工具 + Kconfig（类似）</td>
+          </tr>
+          <tr>
+            <td><strong>驱动模型</strong></td>
+            <td>统一驱动模型（类 Linux），设备树自动绑定</td>
+            <td>无统一模型，各厂商自行实现</td>
+            <td>有驱动框架，但不如 Zephyr 统一</td>
+          </tr>
+          <tr>
+            <td><strong>网络协议栈</strong></td>
+            <td>内置完整 TCP/IP、BLE、802.15.4 等</td>
+            <td>需外接 lwIP 等第三方栈</td>
+            <td>内置 SAL 抽象层 + lwIP</td>
+          </tr>
+          <tr>
+            <td><strong>安全性</strong></td>
+            <td>内置 TLS/DTLS、PSA、安全启动、OTA</td>
+            <td>基础安全，需第三方补充</td>
+            <td>支持 TLS、安全启动等</td>
+          </tr>
+          <tr>
+            <td><strong>社区与生态</strong></td>
+            <td>Linux 基金会，Intel/NXP/Nordic 等巨头支持</td>
+            <td>Amazon 维护，用户基数最大</td>
+            <td>国产开源，国内社区活跃</td>
+          </tr>
+          <tr>
+            <td><strong>开源协议</strong></td>
+            <td>Apache 2.0</td>
+            <td>MIT</td>
+            <td>Apache 2.0 / GPLv2（部分）</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <blockquote>
+        <p><strong>💡 选型建议：</strong>如果你做的是需要丰富网络和安全功能的 IoT 产品，<strong>Zephyr</strong> 是首选；如果项目极简只需要一个调度器，<strong>FreeRTOS</strong> 更轻便；如果团队在国内且需要中文社区支持，<strong>RT-Thread</strong> 也很优秀。</p>
+      </blockquote>
+
+      <h2 id="features">核心特性</h2>
+      <p>Zephyr 之所以被称为"微型 Linux"，是因为它在小体积内实现了大量企业级特性。让我们逐一了解：</p>
+
+      <h3>🪶 轻量可裁剪</h3>
+      <p>Zephyr 最小配置只需要 <strong>8KB ROM + 2KB RAM</strong>——这比一张手机壁纸还小！它的秘密武器是 <strong>Kconfig</strong> 配置系统：你可以像点菜一样，只选自己需要的功能，不需要的模块在编译时直接被裁掉，不占一丁点空间。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">Kconfig</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># 最小化配置示例：只启用内核和串口</span>
+<span class="macro">CONFIG_MINIMAL_LIBC_MALLOC=n</span>
+<span class="macro">CONFIG_PRINTK=y</span>
+<span class="macro">CONFIG_UART=y</span>
+<span class="macro">CONFIG_I2C=n</span>          <span class="cm"># 不用 I2C？直接关掉</span>
+<span class="macro">CONFIG_BLUETOOTH=n</span>    <span class="cm"># 不用蓝牙？也关掉</span></code></pre>
+      </div>
+
+      <h3>⚡ 确定性实时性</h3>
+      <p>作为 RTOS，"实时"是命根子。Zephyr 提供基于优先级的抢占式调度，中断延迟可预测、可量化。简单说就是：<strong>高优先级任务说"我要执行"，低优先级任务必须立刻让路</strong>，绝不拖泥带水。这对于电机控制、工业自动化等场景至关重要。</p>
+
+      <h3>🏗️ 多架构支持</h3>
+      <p>Zephyr 不绑定任何一种 CPU 架构。它通过硬件抽象层（HAL）屏蔽底层差异，同一份应用代码可以在 ARM、RISC-V、x86 等不同平台上运行。就像你写的 Java 代码"一次编译，到处运行"一样，Zephyr 让嵌入式应用也能做到"一份代码，多板运行"。</p>
+
+      <h3>🔒 安全性优先</h3>
+      <p>在 IoT 领域，安全不是可选项，而是必选项。Zephyr 内置了丰富的安全特性：</p>
+      <ul>
+        <li><strong>TLS/DTLS</strong>：基于 mbedTLS，加密通信开箱即用</li>
+        <li><strong>PSA Certified</strong>：符合平台安全架构规范</li>
+        <li><strong>安全启动（Secure Boot）</strong>：防止固件被篡改</li>
+        <li><strong>硬件加密加速</strong>：利用芯片的加密外设提升性能</li>
+        <li><strong>栈保护（Stack Canary）</strong>：检测栈溢出攻击</li>
+      </ul>
+
+      <h3>🧩 高度模块化</h3>
+      <p>Zephyr 的每个子系统（文件系统、网络、传感器、电源管理等）都是独立的模块，你可以按需组合。这就像搭积木——你需要蓝牙？加一块；需要文件系统？再加一块；不需要的模块完全不参与编译，零开销。</p>
+
+      <div class="info-card tip-card">
+        <div class="info-card-title">✅ 实际体验</div>
+        <p>在 nRF52840 上，一个带 BLE 连接 + 传感器采集 + OTA 升级的完整应用，固件大小通常在 200-400KB 之间。这在以前需要 Linux 才能做到的事情，现在一个 MCU 就搞定了。</p>
+      </div>
+
+      <h2 id="hardware">支持的硬件架构</h2>
+      <p>Zephyr 的硬件支持范围之广，在 RTOS 领域几乎无出其右。它就像一个"万能翻译官"，能和各种 CPU 架构对话：</p>
+
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>架构</th>
+            <th>说明</th>
+            <th>典型芯片</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>ARM Cortex-M</strong></td>
+            <td>最主流的 MCU 架构，支持 M0/M0+/M3/M4/M4F/M7/M23/M33/M55/M85</td>
+            <td>STM32、nRF52、LPC、Kinetis</td>
+          </tr>
+          <tr>
+            <td><strong>ARM Cortex-A</strong></td>
+            <td>应用处理器，可运行 MMU 模式</td>
+            <td>i.MX6/7/8、STM32MP1</td>
+          </tr>
+          <tr>
+            <td><strong>ARM Cortex-R</strong></td>
+            <td>实时处理器，用于硬实时场景</td>
+            <td>TMS570、R5F</td>
+          </tr>
+          <tr>
+            <td><strong>RISC-V</strong></td>
+            <td>新兴开放架构，增长迅速</td>
+            <td>SiFive、平头哥、兆易创新</td>
+          </tr>
+          <tr>
+            <td><strong>x86 / x86-64</strong></td>
+            <td>Intel 平台，适合原型验证和仿真</td>
+            <td>Intel Apollo Lake、Elkhart Lake</td>
+          </tr>
+          <tr>
+            <td><strong>ARC</strong></td>
+            <td>Synopsys DesignWare ARC 处理器</td>
+            <td>EM/HS/IoT 系列</td>
+          </tr>
+          <tr>
+            <td><strong>NIOS II</strong></td>
+            <td>Altera FPGA 软核处理器</td>
+            <td>Cyclone/Stratix FPGA</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>目前 Zephyr 已支持超过 <strong>700+ 款开发板</strong>，以下是几款开发者最常用的"明星板卡"：</p>
+      <ul>
+        <li><strong>nRF52840 DK</strong>（Nordic）：BLE 开发首选，Zephyr 对 Nordic 系列的支持最为成熟，nRF Connect SDK 就是基于 Zephyr 构建的</li>
+        <li><strong>STM32 系列</strong>（ST）：从 F103 到 H7 系列，覆盖入门到高性能全系列，是学习 Zephyr 的高性价比选择</li>
+        <li><strong>ESP32</strong>（Espressif）：Wi-Fi + BLE 双模，社区热度极高，Zephyr 对 ESP32 的支持正在快速完善</li>
+        <li><strong>i.MX RT 系列</strong>（NXP）：跨界 MCU，性能强悍，适合工业和音频等高性能场景</li>
+      </ul>
+
+      <blockquote>
+        <p><strong>💡 新手推荐：</strong>如果你刚开始学 Zephyr，<strong>nRF52840 DK</strong> 或 <strong>STM32F4 Discovery</strong> 是最佳起点——它们资料多、社区活跃、遇到问题容易找到答案。</p>
+      </blockquote>
+
+      <h2 id="community">社区与生态</h2>
+      <p>一个开源项目的生命力，取决于它背后的社区。Zephyr 在这方面底气十足：</p>
+
+      <h3>🏢 Linux 基金会背书</h3>
+      <p>Zephyr 是 <strong>Linux 基金会</strong>旗下的独立项目，和 Linux 内核、Kubernetes 等顶级开源项目是"同门师兄弟"。这意味着它有稳定的资金支持、规范的治理流程和长期的发展保障——不会因为某个公司战略调整而"断更"。</p>
+
+      <h3>🏭 巨头联合驱动</h3>
+      <p>Zephyr 的贡献者名单堪称半导体和科技界的"全明星阵容"：</p>
+      <ul>
+        <li><strong>Intel</strong>：x86 平台支持、安全框架</li>
+        <li><strong>NXP</strong>：i.MX 系列驱动、MCUX 集成</li>
+        <li><strong>Nordic Semiconductor</strong>：BLE 协议栈、nRF 系列全支持</li>
+        <li><strong>STMicroelectronics</strong>：STM32 全系列支持</li>
+        <li><strong>Google</strong>：Fuchsia 兼容、测试基础设施</li>
+        <li><strong>Qualcomm</strong>：蜂窝网络支持</li>
+      </ul>
+      <p>这些公司不是"挂名赞助"，而是真金白银地投入工程师写代码。你用的每一行驱动代码，背后都有芯片原厂的工程师在维护。</p>
+
+      <h3>📈 版本演进</h3>
+      <p>Zephyr 采用每 3 个月一个版本的发布节奏，当前已迭代到 <strong>v4.x</strong>。每个版本都会带来新的板卡支持、驱动改进和功能增强。项目在 GitHub 上的活跃度常年位居嵌入式领域前列，PR 合并速度快，Issue 响应及时。</p>
+
+      <div class="info-card warning-card">
+        <div class="info-card-title">⚠️ 版本选择注意</div>
+        <p>生产项目建议使用 LTS（长期支持）版本，如 v3.7 LTS。LTS 版本会持续获得安全补丁和关键 Bug 修复，而非 LTS 版本只维护到下一个版本发布。开发学习则可以直接使用最新版本体验新特性。</p>
+      </div>
+
+      <h3>🌐 丰富的学习资源</h3>
+      <p>Zephyr 拥有完善的官方文档，涵盖从快速入门到 API 参考的各个层面。此外还有大量示例代码（samples/ 目录下 200+ 个示例），几乎每个子系统都有对应的"Hello World"级示例，拿来就能跑。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">bash</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># Zephyr 官方示例目录结构</span>
+zephyr/samples/
+├── basic/blinky          <span class="cm"># LED 闪烁 — 嵌入式界的 Hello World</span>
+├── basic/button          <span class="cm"># 按键检测</span>
+├── hello_world           <span class="cm"># 最简串口输出</span>
+├── net/mqtt_publisher    <span class="cm"># MQTT 发布示例</span>
+├── bluetooth/peripheral  <span class="cm"># BLE 外设示例</span>
+└── ...                   <span class="cm"># 200+ 个示例等你探索</span></code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>💡 下一步：</strong>现在你对 Zephyr 有了整体认识，接下来让我们动手搭建开发环境，运行你的第一个 Zephyr 程序！前往 <a href="/pages/setup.html">开发环境搭建</a> 继续学习。</p>
+      </blockquote>
+    </div>
+  </div>
+  <script type="module" src="/assets/js/search-index.js"></script>
+  <script type="module" src="/assets/js/main.js"></script>
+</body>
+</html>

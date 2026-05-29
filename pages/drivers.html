@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>设备驱动模型 - Zephyr RTOS 中文知识库</title>
+  <link rel="stylesheet" href="/assets/css/main.css">
+</head>
+<body>
+  <div class="content-wrapper">
+    <div class="toc"></div>
+    <div class="content">
+      <h1>设备驱动模型</h1>
+      <p class="subtitle">深入理解 Zephyr RTOS 的设备驱动架构 —— 从硬件描述到驱动实现，从通用 API 到自定义驱动开发</p>
+
+      <h2 id="model">驱动模型架构</h2>
+      <p>Zephyr 的驱动模型是整个系统最精妙的设计之一。它的核心思想是<strong>解耦</strong>——让硬件描述、驱动实现和应用程序三者各司其职，互不干扰。</p>
+      <p>打个比方：驱动 API 就像<strong>万能遥控器</strong>。不管你家是格力空调还是美的空调，遥控器上的"开机""调温"按钮都是一样的。你不需要知道空调内部怎么工作，只需要按按钮就行。Zephyr 的通用 API 就是这个万能遥控器，驱动实现就是各家空调的接收器，设备树就是空调的品牌型号说明书。</p>
+
+      <h3>三层架构</h3>
+      <p>Zephyr 驱动模型采用清晰的三层架构：</p>
+      <ul>
+        <li><strong>应用层</strong>：调用通用 API（如 <code>gpio_pin_set()</code>、<code>i2c_write()</code>），不关心底层硬件细节</li>
+        <li><strong>通用 API 层</strong>：定义统一的函数接口（<code>struct gpio_driver_api</code> 等），是应用和驱动之间的桥梁</li>
+        <li><strong>驱动实现层</strong>：针对具体硬件实现 API，操作寄存器、配置时钟等</li>
+      </ul>
+
+      <div class="info-card">
+        <div class="info-card-title">设备树 → 驱动 → 应用的数据流</div>
+        <p>设备树（Device Tree）描述板子上有哪些硬件、地址在哪、用什么引脚 → 驱动根据设备树信息初始化硬件并注册到系统 → 应用通过通用 API 访问设备，完全不需要知道硬件细节。这种分层设计让同一份应用代码可以在不同硬件平台上运行，只需更换设备树和对应的驱动即可。</p>
+      </div>
+
+      <h3>DEVICE_DEFINE 与驱动注册</h3>
+      <p>每个驱动通过 <code>DEVICE_DEFINE</code> 宏将自身注册到系统中。这个宏在编译期就完成了驱动的"登记"工作——包括初始化函数、驱动 API 结构体、设备数据等。系统启动时，按优先级自动调用各驱动的 init 函数。</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* 驱动 API 结构体：定义该类设备的统一接口 */</span>
+<span class="kw">struct</span> <span class="type">my_driver_api</span> {
+    <span class="type">int</span> (*<span class="fn">open</span>)(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *dev);
+    <span class="type">int</span> (*<span class="fn">read</span>)(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *dev, <span class="type">uint8_t</span> *buf, <span class="type">size_t</span> len);
+    <span class="type">int</span> (*<span class="fn">write</span>)(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *dev, <span class="kw">const</span> <span class="type">uint8_t</span> *buf, <span class="type">size_t</span> len);
+    <span class="kw">void</span> (*<span class="fn">close</span>)(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *dev);
+};
+
+<span class="cm">/* 驱动初始化函数 */</span>
+<span class="kw">static</span> <span class="type">int</span> <span class="fn">my_driver_init</span>(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *dev)
+{
+    <span class="cm">/* 硬件初始化：配置寄存器、使能时钟等 */</span>
+    <span class="kw">return</span> <span class="num">0</span>;
+}
+
+<span class="cm">/* 实例化 API 结构体 */</span>
+<span class="kw">static</span> <span class="kw">const</span> <span class="kw">struct</span> <span class="type">my_driver_api</span> my_api = {
+    .<span class="fn">open</span>  = my_driver_open,
+    .<span class="fn">read</span>  = my_driver_read,
+    .<span class="fn">write</span> = my_driver_write,
+    .<span class="fn">close</span> = my_driver_close,
+};
+
+<span class="cm">/* 注册驱动到系统 */</span>
+<span class="macro">DEVICE_DEFINE</span>(my_device,            <span class="cm">/* 设备实例名 */</span>
+               <span class="str">"MY_DEVICE"</span>,          <span class="cm">/* 设备名称字符串 */</span>
+               &amp;<span class="fn">my_driver_init</span>,      <span class="cm">/* 初始化函数 */</span>
+               <span class="macro">NULL</span>,                  <span class="cm">/* pm_device（电源管理） */</span>
+               &amp;my_data,              <span class="cm">/* 设备私有数据 */</span>
+               &amp;my_config,            <span class="cm">/* 设备配置信息 */</span>
+               <span class="macro">POST_KERNEL</span>,          <span class="cm">/* 初始化优先级等级 */</span>
+               <span class="num">50</span>,                    <span class="cm">/* 初始化优先级数值 */</span>
+               &amp;my_api);              <span class="cm">/* API 结构体指针 */</span></code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>初始化优先级等级分为 <code>EARLY</code>、<code>PRE_KERNEL_1</code>、<code>PRE_KERNEL_2</code>、<code>POST_KERNEL</code>、<code>APPLICATION</code>。大多数驱动使用 <code>POST_KERNEL</code>，只有极少数必须在调度器启动前就绪的驱动（如中断控制器）才用更早的等级。</p>
+      </blockquote>
+
+      <h2 id="gpio">GPIO 输入输出</h2>
+      <p>GPIO（General Purpose Input/Output）是最基础的外设接口，就像<strong>电灯开关</strong>——你可以控制开关的开与关（输出高低电平），也可以检测开关是否被按下（读取输入电平）。Zephyr 的 GPIO 驱动提供了引脚配置、输入读取、输出控制和中断处理四大核心功能。</p>
+
+      <h3>核心 API</h3>
+      <ul>
+        <li><code>gpio_pin_configure()</code> — 配置引脚方向和属性（输入/输出、上拉/下拉等）</li>
+        <li><code>gpio_port_set_bits_raw()</code> — 将指定引脚设为高电平（原子操作）</li>
+        <li><code>gpio_port_clear_bits_raw()</code> — 将指定引脚设为低电平</li>
+        <li><code>gpio_pin_get()</code> — 读取引脚当前电平</li>
+        <li><code>gpio_pin_interrupt_configure()</code> — 配置引脚中断触发方式</li>
+      </ul>
+
+      <h3>示例：LED 闪烁 + 按键中断</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/kernel.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/drivers/gpio.h&gt;</span>
+
+<span class="macro">#define LED_NODE</span>   <span class="macro">DT_NODELABEL</span>(led0)
+<span class="macro">#define BUTTON_NODE</span> <span class="macro">DT_NODELABEL</span>(button0)
+
+<span class="kw">static</span> <span class="kw">const</span> <span class="kw">struct</span> <span class="type">gpio_dt_spec</span> led = <span class="macro">GPIO_DT_SPEC_GET</span>(LED_NODE, gpios);
+<span class="kw">static</span> <span class="kw">const</span> <span class="kw">struct</span> <span class="type">gpio_dt_spec</span> btn = <span class="macro">GPIO_DT_SPEC_GET</span>(BUTTON_NODE, gpios);
+<span class="kw">static</span> <span class="kw">struct</span> <span class="type">gpio_callback</span> btn_cb_data;
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">button_pressed</span>(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *dev,
+                          <span class="kw">struct</span> <span class="type">gpio_callback</span> *cb,
+                          <span class="type">uint32_t</span> pins)
+{
+    <span class="fn">printk</span>(<span class="str">"按键被按下！引脚掩码: 0x%x\n"</span>, pins);
+    <span class="fn">gpio_pin_toggle_dt</span>(&amp;led);
+}
+
+<span class="type">int</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+    <span class="cm">/* 配置 LED 引脚为输出，初始低电平 */</span>
+    <span class="fn">gpio_pin_configure_dt</span>(&amp;led, <span class="macro">GPIO_OUTPUT_ACTIVE</span>);
+
+    <span class="cm">/* 配置按键引脚为输入 */</span>
+    <span class="fn">gpio_pin_configure_dt</span>(&amp;btn, <span class="macro">GPIO_INPUT</span>);
+
+    <span class="cm">/* 配置中断：下降沿触发（按下时） */</span>
+    <span class="fn">gpio_pin_interrupt_configure_dt</span>(&amp;btn, <span class="macro">GPIO_INT_EDGE_TO_ACTIVE</span>);
+
+    <span class="cm">/* 注册回调 */</span>
+    <span class="fn">gpio_init_callback</span>(&amp;btn_cb_data, button_pressed, <span class="macro">BIT</span>(btn.pin));
+    <span class="fn">gpio_add_callback</span>(btn.port, &amp;btn_cb_data);
+
+    <span class="cm">/* LED 闪烁主循环 */</span>
+    <span class="kw">while</span> (<span class="num">1</span>) {
+        <span class="fn">gpio_pin_toggle_dt</span>(&amp;led);
+        <span class="fn">k_msleep</span>(<span class="num">500</span>);
+    }
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>注意：</strong>中断回调函数运行在中断上下文中，不能执行阻塞操作（如 <code>k_msleep()</code>、<code>k_sem_take()</code>）。如果需要在中断中做耗时操作，应该使用工作队列（<code>k_work</code>）将处理推迟到线程上下文。</p>
+      </blockquote>
+
+      <h2 id="i2c">I2C 通信</h2>
+      <p>I2C 是一种两线制串行总线，就像<strong>一条公交路线</strong>——一条线上挂着多个站点（从设备），每个站点有唯一的地址。主设备是公交车，按地址找到对应的站点进行数据交换。SCL 是时钟线（公交车的时刻表），SDA 是数据线（乘客上下车）。</p>
+
+      <h3>核心 API</h3>
+      <ul>
+        <li><code>i2c_write()</code> — 向从设备写入数据</li>
+        <li><code>i2c_read()</code> — 从从设备读取数据</li>
+        <li><code>i2c_write_read()</code> — 先写后读（最常见的"写寄存器地址 → 读数据"模式）</li>
+        <li><code>i2c_transfer()</code> — 底层传输，使用 <code>i2c_msg</code> 结构体，支持连续多次读写</li>
+      </ul>
+
+      <h3>示例：通过 I2C 读取温度传感器</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/kernel.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/drivers/i2c.h&gt;</span>
+
+<span class="cm">/* 假设使用 TMP102 温度传感器，7位地址 0x48 */</span>
+<span class="macro">#define TEMP_SENSOR_ADDR</span> <span class="num">0x48</span>
+<span class="macro">#define TEMP_REG</span>          <span class="num">0x00</span>
+
+<span class="type">int</span> <span class="fn">read_temperature</span>(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *i2c_dev)
+{
+    <span class="type">uint8_t</span> reg = <span class="macro">TEMP_REG</span>;
+    <span class="type">uint8_t</span> buf[<span class="num">2</span>];
+    <span class="type">int</span> ret;
+
+    <span class="cm">/* 方式一：i2c_write_read — 最简洁的写后读 */</span>
+    ret = <span class="fn">i2c_write_read</span>(i2c_dev, <span class="macro">TEMP_SENSOR_ADDR</span>,
+                        &amp;reg, <span class="num">1</span>,    <span class="cm">/* 写：寄存器地址 */</span>
+                        buf, <span class="num">2</span>);      <span class="cm">/* 读：2字节温度数据 */</span>
+    <span class="kw">if</span> (ret &lt; <span class="num">0</span>) {
+        <span class="fn">printk</span>(<span class="str">"I2C 读取失败: %d\n"</span>, ret);
+        <span class="kw">return</span> ret;
+    }
+
+    <span class="cm">/* TMP102: 12位温度值，左对齐在两个字节中 */</span>
+    <span class="type">int16_t</span> raw = (buf[<span class="num">0</span>] &lt;&lt; <span class="num">4</span>) | (buf[<span class="num">1</span>] &gt;&gt; <span class="num">4</span>);
+    <span class="kw">if</span> (raw &amp; <span class="num">0x800</span>) {
+        raw |= <span class="num">0xF000</span>;  <span class="cm">/* 负温度：符号扩展 */</span>
+    }
+    <span class="type">float</span> temp_c = raw * <span class="num">0.0625f</span>;
+    <span class="fn">printk</span>(<span class="str">"温度: %.2f °C\n"</span>, temp_c);
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}
+
+<span class="type">int</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+    <span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *i2c = <span class="macro">DEVICE_DT_GET</span>(<span class="macro">DT_NODELABEL</span>(i2c0));
+
+    <span class="kw">if</span> (!<span class="fn">device_is_ready</span>(i2c)) {
+        <span class="fn">printk</span>(<span class="str">"I2C 设备未就绪\n"</span>);
+        <span class="kw">return</span> -<span class="num">1</span>;
+    }
+
+    <span class="kw">while</span> (<span class="num">1</span>) {
+        <span class="fn">read_temperature</span>(i2c);
+        <span class="fn">k_msleep</span>(<span class="num">1000</span>);
+    }
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>小贴士：</strong><code>i2c_write_read()</code> 内部会自动处理重复起始条件（Repeated START），确保读操作不会被其他主设备插队。如果用 <code>i2c_write()</code> + <code>i2c_read()</code> 分开调用，中间总线可能被释放，在多主环境中可能出现问题。</p>
+      </blockquote>
+
+      <h2 id="spi">SPI 通信</h2>
+      <p>SPI 是一种高速同步串行总线，就像<strong>一条四车道高速公路</strong>——MOSI 是去程车道（主发从收），MISO 是回程车道（从发主收），SCLK 是交通信号灯（时钟同步），CS 是收费站（选中哪个从设备）。SPI 是全双工通信，收发同时进行，速度远超 I2C。</p>
+
+      <h3>SPI 四种工作模式</h3>
+      <p>SPI 的工作模式由时钟极性（CPOL）和时钟相位（CPHA）决定：</p>
+      <ul>
+        <li><strong>Mode 0</strong>（CPOL=0, CPHA=0）：空闲低电平，第一个边沿采样——最常用</li>
+        <li><strong>Mode 1</strong>（CPOL=0, CPHA=1）：空闲低电平，第二个边沿采样</li>
+        <li><strong>Mode 2</strong>（CPOL=1, CPHA=0）：空闲高电平，第一个边沿采样</li>
+        <li><strong>Mode 3</strong>（CPOL=1, CPHA=1）：空闲高电平，第二个边沿采样</li>
+      </ul>
+
+      <h3>示例：SPI 数据传输</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/kernel.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/drivers/spi.h&gt;</span>
+
+<span class="macro">#define SPI_NODE</span> <span class="macro">DT_NODELABEL</span>(spi1)
+
+<span class="kw">static</span> <span class="kw">const</span> <span class="kw">struct</span> <span class="type">spi_dt_spec</span> spi_spec = <span class="macro">SPI_DT_SPEC_GET</span>(
+    SPI_NODE,
+    <span class="macro">SPI_OP_MODE_MASTER</span> | <span class="macro">SPI_MODE_CPOL</span> | <span class="macro">SPI_MODE_CPHA</span>
+    | <span class="macro">SPI_WORD_SET</span>(<span class="num">8</span>) | <span class="macro">SPI_LINES_SINGLE</span>,
+    <span class="num">0</span>   <span class="cm">/* CS 延迟（微秒） */</span>
+);
+
+<span class="type">int</span> <span class="fn">spi_transaction</span>(<span class="kw">void</span>)
+{
+    <span class="type">uint8_t</span> tx_buf[] = { <span class="num">0x9F</span> };          <span class="cm">/* 命令：读取 JEDEC ID */</span>
+    <span class="type">uint8_t</span> rx_buf[<span class="num">4</span>] = { <span class="num">0</span> };             <span class="cm">/* 接收缓冲区 */</span>
+    <span class="kw">struct</span> <span class="type">spi_buf</span> tx = { .buf = tx_buf, .len = <span class="kw">sizeof</span>(tx_buf) };
+    <span class="kw">struct</span> <span class="type">spi_buf</span> rx = { .buf = rx_buf, .len = <span class="kw">sizeof</span>(rx_buf) };
+    <span class="kw">struct</span> <span class="type">spi_buf_set</span> tx_set = { .buffers = &amp;tx, .count = <span class="num">1</span> };
+    <span class="kw">struct</span> <span class="type">spi_buf_set</span> rx_set = { .buffers = &amp;rx, .count = <span class="num">1</span> };
+
+    <span class="cm">/* 全双工收发 */</span>
+    <span class="type">int</span> ret = <span class="fn">spi_transceive_dt</span>(&amp;spi_spec, &amp;tx_set, &amp;rx_set);
+    <span class="kw">if</span> (ret &lt; <span class="num">0</span>) {
+        <span class="fn">printk</span>(<span class="str">"SPI 传输失败: %d\n"</span>, ret);
+        <span class="kw">return</span> ret;
+    }
+
+    <span class="fn">printk</span>(<span class="str">"JEDEC ID: %02x %02x %02x\n"</span>, rx_buf[<span class="num">1</span>], rx_buf[<span class="num">2</span>], rx_buf[<span class="num">3</span>]);
+    <span class="kw">return</span> <span class="num">0</span>;
+}
+
+<span class="type">int</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+    <span class="kw">if</span> (!<span class="fn">spi_is_ready_dt</span>(&amp;spi_spec)) {
+        <span class="fn">printk</span>(<span class="str">"SPI 设备未就绪\n"</span>);
+        <span class="kw">return</span> -<span class="num">1</span>;
+    }
+
+    <span class="fn">spi_transaction</span>();
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>注意：</strong>SPI 的 CS 片选信号可以在设备树中指定 GPIO，Zephyr 会自动在传输前拉低 CS、传输后拉高 CS。如果需要手动控制 CS，可以在 <code>spi_config</code> 中设置 <code>SPI_HOLD_ON_CS</code> 标志。</p>
+      </blockquote>
+
+      <h2 id="uart">UART 串口通信</h2>
+      <p>UART 是最经典的串行通信方式，就像<strong>两个人用对讲机通话</strong>——一个说一个听，按固定速率（波特率）收发数据。Zephyr 提供了三种 UART 使用模式：轮询（Poll）、中断（Interrupt）和异步（Async）。</p>
+
+      <h3>三种模式对比</h3>
+      <div class="comparison-table">
+        <table>
+          <thead>
+            <tr>
+              <th>模式</th>
+              <th>API</th>
+              <th>特点</th>
+              <th>适用场景</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>轮询</td>
+              <td><code>uart_poll_in/out</code></td>
+              <td>CPU 空转等待，最简单</td>
+              <td>调试输出、简单通信</td>
+            </tr>
+            <tr>
+              <td>中断</td>
+              <td><code>uart_irq_callback_set</code></td>
+              <td>数据到达时触发中断，CPU 利用率高</td>
+              <td>大多数实际应用</td>
+            </tr>
+            <tr>
+              <td>异步</td>
+              <td><code>uart_tx/rx_enable</code></td>
+              <td>DMA 传输，零 CPU 开销</td>
+              <td>高速通信、低功耗场景</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>示例：中断驱动接收</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/kernel.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/drivers/uart.h&gt;</span>
+
+<span class="macro">#define UART_NODE</span> <span class="macro">DT_NODELABEL</span>(uart0)
+
+<span class="kw">static</span> <span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *uart_dev;
+<span class="kw">static</span> <span class="type">uint8_t</span> rx_buf[<span class="num">64</span>];
+<span class="kw">static</span> <span class="type">size_t</span> rx_idx = <span class="num">0</span>;
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">uart_irq_callback</span>(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *dev, <span class="kw">void</span> *user_data)
+{
+    <span class="type">uint8_t</span> c;
+
+    <span class="kw">while</span> (<span class="fn">uart_irq_update</span>(dev) &amp;&amp; <span class="fn">uart_irq_rx_ready</span>(dev)) {
+        <span class="kw">while</span> (<span class="fn">uart_fifo_read</span>(dev, &amp;c, <span class="num">1</span>) == <span class="num">1</span>) {
+            <span class="kw">if</span> (c == <span class="str">'\n'</span> || rx_idx &gt;= <span class="kw">sizeof</span>(rx_buf) - <span class="num">1</span>) {
+                rx_buf[rx_idx] = <span class="str">'\0'</span>;
+                <span class="fn">printk</span>(<span class="str">"收到: %s\n"</span>, rx_buf);
+                rx_idx = <span class="num">0</span>;
+            } <span class="kw">else</span> {
+                rx_buf[rx_idx++] = c;
+            }
+        }
+    }
+}
+
+<span class="type">int</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+    uart_dev = <span class="macro">DEVICE_DT_GET</span>(<span class="macro">UART_NODE</span>);
+    <span class="kw">if</span> (!<span class="fn">device_is_ready</span>(uart_dev)) {
+        <span class="fn">printk</span>(<span class="str">"UART 设备未就绪\n"</span>);
+        <span class="kw">return</span> -<span class="num">1</span>;
+    }
+
+    <span class="fn">uart_irq_callback_set</span>(uart_dev, uart_irq_callback, <span class="macro">NULL</span>);
+    <span class="fn">uart_irq_rx_enable</span>(uart_dev);
+
+    <span class="kw">while</span> (<span class="num">1</span>) {
+        <span class="fn">k_msleep</span>(<span class="num">1000</span>);
+    }
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>在中断回调中，务必先调用 <code>uart_irq_update()</code> 确认中断状态已更新，再用 <code>uart_irq_rx_ready()</code> 检查是否有数据。循环读取 FIFO 直到读空，否则中断可能不会再次触发。</p>
+      </blockquote>
+
+      <h2 id="pwm">PWM 脉冲宽度调制</h2>
+      <p>PWM 就像<strong>水龙头的开关节奏</strong>——你快速地开关水龙头，开的时间长，接到的水就多（占空比高）；开的时间短，接到的水就少（占空比低）。虽然水龙头只有开和关两个状态，但通过控制开关的比例，就能"模拟"出不同的水流大小。这就是 PWM 控制亮度、速度的原理。</p>
+
+      <h3>核心概念</h3>
+      <ul>
+        <li><strong>周期（Period）</strong>：一个完整 PWM 循环的时间</li>
+        <li><strong>脉冲宽度（Pulse）</strong>：高电平持续的时间</li>
+        <li><strong>占空比（Duty Cycle）</strong>：脉冲宽度 / 周期 × 100%</li>
+      </ul>
+
+      <h3>示例：控制 LED 亮度渐变</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/kernel.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/drivers/pwm.h&gt;</span>
+
+<span class="macro">#define PWM_NODE</span> <span class="macro">DT_NODELABEL</span>(pwm_led0)
+
+<span class="kw">static</span> <span class="kw">const</span> <span class="kw">struct</span> <span class="type">pwm_dt_spec</span> pwm_led = <span class="macro">PWM_DT_SPEC_GET</span>(PWM_NODE);
+
+<span class="macro">#define PERIOD_USEC</span>  <span class="num">20000</span>   <span class="cm">/* 周期 20ms = 50Hz */</span>
+<span class="macro">#define STEP_USEC</span>     <span class="num">200</span>     <span class="cm">/* 每步变化 200μs */</span>
+
+<span class="type">int</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+    <span class="kw">if</span> (!<span class="fn">device_is_ready</span>(pwm_led.dev)) {
+        <span class="fn">printk</span>(<span class="str">"PWM 设备未就绪\n"</span>);
+        <span class="kw">return</span> -<span class="num">1</span>;
+    }
+
+    <span class="type">uint32_t</span> pulse = <span class="num">0</span>;
+    <span class="type">int</span> direction = <span class="num">1</span>;
+
+    <span class="kw">while</span> (<span class="num">1</span>) {
+        <span class="cm">/* 设置 PWM：周期 20ms，脉冲宽度 pulse μs */</span>
+        <span class="fn">pwm_set_usec</span>(pwm_led.dev, pwm_led.channel,
+                     <span class="macro">PERIOD_USEC</span>, pulse);
+
+        <span class="cm">/* 呼吸灯效果：亮度渐增再渐减 */</span>
+        pulse += direction * <span class="macro">STEP_USEC</span>;
+        <span class="kw">if</span> (pulse &gt;= <span class="macro">PERIOD_USEC</span>) {
+            pulse = <span class="macro">PERIOD_USEC</span>;
+            direction = -<span class="num">1</span>;
+        } <span class="kw">else if</span> (pulse == <span class="num">0</span>) {
+            direction = <span class="num">1</span>;
+        }
+
+        <span class="fn">k_msleep</span>(<span class="num">20</span>);
+    }
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <div class="tip-card">
+        <p>控制舵机时，通常使用 20ms 周期（50Hz），脉冲宽度 0.5ms~2.5ms 对应 0°~180° 转角。用 <code>pwm_set_usec()</code> 可以很方便地设置微秒级的脉冲宽度。</p>
+      </div>
+
+      <h2 id="adc">ADC 模数转换</h2>
+      <p>ADC 就像<strong>翻译官</strong>——它把模拟世界的连续信号（电压）翻译成数字世界的离散数值，让 MCU 能理解和处理。比如温度传感器输出一个随温度变化的电压，ADC 把这个电压转换成数字值，程序就能计算出实际温度。</p>
+
+      <h3>核心概念</h3>
+      <ul>
+        <li><strong>分辨率（Resolution）</strong>：ADC 的"刻度精度"，如 12 位 ADC 将量程分成 2¹² = 4096 级</li>
+        <li><strong>参考电压（Reference）</strong>：ADC 的满量程电压基准</li>
+        <li><strong>增益（Gain）</strong>：输入信号的放大倍数，可测量更小的电压范围</li>
+      </ul>
+
+      <h3>示例：读取模拟电压</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/kernel.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/drivers/adc.h&gt;</span>
+
+<span class="macro">#define ADC_NODE</span>       <span class="macro">DT_NODELABEL</span>(adc0)
+<span class="macro">#define ADC_CHANNEL</span>    <span class="num">0</span>
+<span class="macro">#define ADC_RESOLUTION</span> <span class="num">12</span>
+
+<span class="kw">static</span> <span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *adc_dev;
+
+<span class="kw">static</span> <span class="kw">struct</span> <span class="type">adc_channel_cfg</span> channel_cfg = {
+    .gain             = <span class="macro">ADC_GAIN_1</span>,         <span class="cm">/* 增益 1x */</span>
+    .reference        = <span class="macro">ADC_REF_INTERNAL</span>,    <span class="cm">/* 内部参考电压 */</span>
+    .acquisition_time = <span class="macro">ADC_ACQ_TIME_DEFAULT</span>,
+    .channel_id       = <span class="macro">ADC_CHANNEL</span>,
+    .differential     = <span class="num">0</span>,                   <span class="cm">/* 单端输入 */</span>
+};
+
+<span class="kw">static</span> <span class="type">int16_t</span> sample_buffer[<span class="num">1</span>];
+
+<span class="kw">static</span> <span class="kw">struct</span> <span class="type">adc_sequence</span> sequence = {
+    .channels    = <span class="macro">BIT</span>(<span class="macro">ADC_CHANNEL</span>),
+    .buffer      = sample_buffer,
+    .buffer_size = <span class="kw">sizeof</span>(sample_buffer),
+    .resolution  = <span class="macro">ADC_RESOLUTION</span>,
+};
+
+<span class="type">int</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+    adc_dev = <span class="macro">DEVICE_DT_GET</span>(<span class="macro">ADC_NODE</span>);
+    <span class="kw">if</span> (!<span class="fn">device_is_ready</span>(adc_dev)) {
+        <span class="fn">printk</span>(<span class="str">"ADC 设备未就绪\n"</span>);
+        <span class="kw">return</span> -<span class="num">1</span>;
+    }
+
+    <span class="fn">adc_channel_setup</span>(adc_dev, &amp;channel_cfg);
+
+    <span class="kw">while</span> (<span class="num">1</span>) {
+        <span class="type">int</span> ret = <span class="fn">adc_read</span>(adc_dev, &amp;sequence);
+        <span class="kw">if</span> (ret == <span class="num">0</span>) {
+            <span class="cm">/* 将原始值转换为电压（mV） */</span>
+            <span class="type">int32_t</span> raw = sample_buffer[<span class="num">0</span>];
+            <span class="fn">adc_raw_to_millivolts</span>(
+                <span class="fn">adc_ref_internal</span>(adc_dev),
+                channel_cfg.gain,
+                <span class="macro">ADC_RESOLUTION</span>,
+                &amp;raw);
+            <span class="fn">printk</span>(<span class="str">"ADC 原始值: %d, 电压: %d mV\n"</span>,
+                   sample_buffer[<span class="num">0</span>], raw);
+        }
+        <span class="fn">k_msleep</span>(<span class="num">500</span>);
+    }
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>注意：</strong><code>adc_raw_to_millivolts()</code> 会就地修改传入的值，所以如果还需要原始值，请提前备份。另外，不同 MCU 的内部参考电压不同（常见的有 1.8V、2.5V、3.3V），请查阅数据手册确认。</p>
+      </blockquote>
+
+      <h2 id="dma">DMA 直接内存访问</h2>
+      <p>DMA 就像<strong>快递员</strong>——你把要搬运的包裹（数据）和地址告诉快递员，快递员自己去搬运，你不用亲力亲为。CPU 只需要发起一次 DMA 传输请求，之后就可以去做别的事情，DMA 控制器会在后台自动完成数据搬运，搬运完了通知 CPU。</p>
+
+      <h3>DMA 的两种典型场景</h3>
+      <ul>
+        <li><strong>内存到内存（Memory-to-Memory）</strong>：快速搬运大块数据，比如图像缓冲区拷贝。速度远超 CPU 逐字节复制。</li>
+        <li><strong>外设到内存（Peripheral DMA）</strong>：UART、SPI、I2C 等外设收发数据时，DMA 自动在外设寄存器和内存缓冲区之间搬运数据，CPU 几乎零开销。这就是 UART 异步模式高效的秘密。</li>
+      </ul>
+
+      <h3>DMA 通道与配置</h3>
+      <p>每个 DMA 控制器有多个通道，每个通道可以独立配置：</p>
+      <ul>
+        <li><strong>源地址和目标地址</strong>：数据从哪来、到哪去</li>
+        <li><strong>传输宽度</strong>：每次搬运 1/2/4 字节</li>
+        <li><strong>块大小</strong>：一次 DMA 请求搬运的数据量</li>
+        <li><strong>回调函数</strong>：传输完成时的通知</li>
+      </ul>
+
+      <div class="warning-card">
+        <p>DMA 配置与具体硬件强相关，不同 MCU 的 DMA 控制器差异较大。使用 DMA 时务必参考芯片数据手册中的 DMA 通道映射表，确保外设请求信号连接到正确的 DMA 通道。配置错误可能导致数据丢失或系统崩溃。</p>
+      </div>
+
+      <h2 id="sensor">传感器驱动</h2>
+      <p>Zephyr 的传感器子系统就像<strong>统一的仪表盘</strong>——不管你用的是加速度计、陀螺仪、温度计还是湿度计，读取数据的方式都一样：先 <code>sensor_sample_fetch()</code> 采样，再 <code>sensor_channel_get()</code> 取值。这种统一的接口让你可以轻松替换传感器硬件，而应用代码几乎不用改。</p>
+
+      <h3>核心 API</h3>
+      <ul>
+        <li><code>sensor_sample_fetch()</code> — 从传感器获取一次采样（触发硬件测量）</li>
+        <li><code>sensor_channel_get()</code> — 读取指定通道的采样值</li>
+        <li><code>sensor_sample_fetch_chan()</code> — 只获取指定通道的采样</li>
+      </ul>
+
+      <h3>sensor_value 结构体</h3>
+      <p>传感器返回的值用 <code>struct sensor_value</code> 表示，包含两个 int32_t 字段：<code>val1</code> 是整数部分，<code>val2</code> 是小数部分（以百万分之一为单位）。实际值 = val1 + val2 × 10⁻⁶。</p>
+
+      <h3>示例：读取加速度计数据</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="macro">#include</span> <span class="str">&lt;zephyr/kernel.h&gt;</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/drivers/sensor.h&gt;</span>
+
+<span class="cm">/* 从设备树获取加速度计节点 */</span>
+<span class="kw">static</span> <span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *accel = <span class="macro">DEVICE_DT_GET</span>(<span class="macro">DT_NODELABEL</span>(accel0));
+
+<span class="kw">static</span> <span class="kw">void</span> <span class="fn">print_sensor_value</span>(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">sensor_value</span> *val)
+{
+    <span class="fn">printk</span>(<span class="str">"%d.%06d"</span>, val-&gt;val1, <span class="fn">abs</span>(val-&gt;val2));
+}
+
+<span class="type">int</span> <span class="fn">main</span>(<span class="kw">void</span>)
+{
+    <span class="kw">if</span> (!<span class="fn">device_is_ready</span>(accel)) {
+        <span class="fn">printk</span>(<span class="str">"加速度计未就绪\n"</span>);
+        <span class="kw">return</span> -<span class="num">1</span>;
+    }
+
+    <span class="kw">while</span> (<span class="num">1</span>) {
+        <span class="cm">/* 第一步：触发采样 */</span>
+        <span class="type">int</span> ret = <span class="fn">sensor_sample_fetch</span>(accel);
+        <span class="kw">if</span> (ret &lt; <span class="num">0</span>) {
+            <span class="fn">printk</span>(<span class="str">"采样失败: %d\n"</span>, ret);
+            <span class="fn">k_msleep</span>(<span class="num">100</span>);
+            <span class="kw">continue</span>;
+        }
+
+        <span class="cm">/* 第二步：读取各轴数据 */</span>
+        <span class="kw">struct</span> <span class="type">sensor_value</span> accel_x, accel_y, accel_z;
+
+        <span class="fn">sensor_channel_get</span>(accel, <span class="macro">SENSOR_CHAN_ACCEL_X</span>, &amp;accel_x);
+        <span class="fn">sensor_channel_get</span>(accel, <span class="macro">SENSOR_CHAN_ACCEL_Y</span>, &amp;accel_y);
+        <span class="fn">sensor_channel_get</span>(accel, <span class="macro">SENSOR_CHAN_ACCEL_Z</span>, &amp;accel_z);
+
+        <span class="fn">printk</span>(<span class="str">"加速度 (m/s²): X="</span>);
+        <span class="fn">print_sensor_value</span>(&amp;accel_x);
+        <span class="fn">printk</span>(<span class="str">" Y="</span>);
+        <span class="fn">print_sensor_value</span>(&amp;accel_y);
+        <span class="fn">printk</span>(<span class="str">" Z="</span>);
+        <span class="fn">print_sensor_value</span>(&amp;accel_z);
+        <span class="fn">printk</span>(<span class="str">"\n"</span>);
+
+        <span class="fn">k_msleep</span>(<span class="num">100</span>);
+    }
+
+    <span class="kw">return</span> <span class="num">0</span>;
+}</code></pre>
+      </div>
+
+      <div class="info-card">
+        <div class="info-card-title">Zephyr 支持的传感器类型</div>
+        <p>Zephyr 内置了大量传感器驱动，包括但不限于：BME280（温湿度气压）、MPU6050（六轴 IMU）、LIS2DH（加速度计）、BMM150（磁力计）、VL53L0X（激光测距）、SHT3x（温湿度）等。完整列表参见 Zephyr 官方文档的 Sensor Drivers 章节。</p>
+      </div>
+
+      <h2 id="custom">自定义驱动开发</h2>
+      <p>当 Zephyr 内置驱动无法满足需求时——比如你用了一颗冷门芯片，或者需要驱动自定义的 FPGA 外设——就需要自己写驱动了。别担心，Zephyr 的驱动模型非常规范，按照以下步骤一步步来就行。</p>
+
+      <h3>开发步骤</h3>
+      <ol>
+        <li><strong>定义驱动 API 结构体</strong>：描述你的设备提供哪些操作</li>
+        <li><strong>实现初始化函数</strong>：硬件复位、寄存器配置、中断设置</li>
+        <li><strong>使用 DEVICE_DEFINE 注册驱动</strong>：将驱动纳入系统管理</li>
+        <li><strong>添加 Kconfig 选项</strong>：让用户可以在 menuconfig 中启用/禁用你的驱动</li>
+        <li><strong>添加设备树绑定</strong>：让设备树能描述你的硬件信息</li>
+      </ol>
+
+      <h3>最小自定义驱动骨架</h3>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">C</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* ===== my_driver.h — 对外头文件 ===== */</span>
+<span class="macro">#include</span> <span class="str">&lt;zephyr/device.h&gt;</span>
+
+<span class="cm">/* 定义驱动 API 结构体 */</span>
+<span class="kw">struct</span> <span class="type">my_driver_api</span> {
+    <span class="type">int</span> (*<span class="fn">do_something</span>)(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *dev, <span class="type">int</span> param);
+    <span class="type">int</span> (*<span class="fn">get_status</span>)(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *dev);
+};
+
+<span class="cm">/* 便捷包装函数，让用户不用直接操作 API 结构体 */</span>
+<span class="kw">static</span> <span class="kw">inline</span> <span class="type">int</span> <span class="fn">my_driver_do_something</span>(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *dev, <span class="type">int</span> param)
+{
+    <span class="kw">const</span> <span class="kw">struct</span> <span class="type">my_driver_api</span> *api =
+        (<span class="kw">const</span> <span class="kw">struct</span> <span class="type">my_driver_api</span> *)dev-&gt;api;
+    <span class="kw">return</span> api-&gt;<span class="fn">do_something</span>(dev, param);
+}
+
+<span class="cm">/* ===== my_driver.c — 驱动实现 ===== */</span>
+<span class="macro">#include</span> <span class="str">"my_driver.h"</span>
+
+<span class="cm">/* 设备私有数据 */</span>
+<span class="kw">struct</span> <span class="type">my_driver_data</span> {
+    <span class="type">int</span> state;
+    <span class="type">uint8_t</span> buffer[<span class="num">32</span>];
+};
+
+<span class="cm">/* 设备配置信息（来自设备树） */</span>
+<span class="kw">struct</span> <span class="type">my_driver_config</span> {
+    <span class="type">uint32_t</span> base_addr;
+    <span class="type">int</span> irq_num;
+};
+
+<span class="kw">static</span> <span class="type">int</span> <span class="fn">my_do_something</span>(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *dev, <span class="type">int</span> param)
+{
+    <span class="kw">struct</span> <span class="type">my_driver_data</span> *data = dev-&gt;data;
+    data-&gt;state = param;
+    <span class="kw">return</span> <span class="num">0</span>;
+}
+
+<span class="kw">static</span> <span class="type">int</span> <span class="fn">my_get_status</span>(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *dev)
+{
+    <span class="kw">struct</span> <span class="type">my_driver_data</span> *data = dev-&gt;data;
+    <span class="kw">return</span> data-&gt;state;
+}
+
+<span class="kw">static</span> <span class="type">int</span> <span class="fn">my_driver_init</span>(<span class="kw">const</span> <span class="kw">struct</span> <span class="type">device</span> *dev)
+{
+    <span class="kw">struct</span> <span class="type">my_driver_data</span> *data = dev-&gt;data;
+    data-&gt;state = <span class="num">0</span>;
+    <span class="fn">printk</span>(<span class="str">"自定义驱动初始化完成\n"</span>);
+    <span class="kw">return</span> <span class="num">0</span>;
+}
+
+<span class="kw">static</span> <span class="kw">const</span> <span class="kw">struct</span> <span class="type">my_driver_api</span> my_api = {
+    .<span class="fn">do_something</span> = my_do_something,
+    .<span class="fn">get_status</span>   = my_get_status,
+};
+
+<span class="kw">static</span> <span class="kw">struct</span> <span class="type">my_driver_data</span> my_data;
+<span class="kw">static</span> <span class="kw">const</span> <span class="kw">struct</span> <span class="type">my_driver_config</span> my_config = {
+    .base_addr = <span class="macro">DT_REG_ADDR</span>(<span class="macro">DT_NODELABEL</span>(mydev)),
+    .irq_num   = <span class="macro">DT_IRQN</span>(<span class="macro">DT_NODELABEL</span>(mydev)),
+};
+
+<span class="macro">DEVICE_DEFINE</span>(my_driver, <span class="str">"MY_DRIVER"</span>,
+               my_driver_init, <span class="macro">NULL</span>,
+               &amp;my_data, &amp;my_config,
+               <span class="macro">POST_KERNEL</span>, <span class="num">50</span>,
+               &amp;my_api);</code></pre>
+      </div>
+
+      <h3>Kconfig 配置</h3>
+      <p>在驱动的 <code>Kconfig</code> 文件中添加配置选项：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">Kconfig</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code>config MY_DRIVER
+    bool "My custom driver"
+    default y
+    depends on DT_HAS_MYVENDOR_MYDRIVER_ENABLED
+    help
+      Enable the custom driver for MyDevice.
+
+config MY_DRIVER_INIT_PRIORITY
+    int "My driver init priority"
+    default 50
+    depends on MY_DRIVER
+    help
+      Initialization priority for the custom driver.</code></pre>
+      </div>
+
+      <h3>设备树绑定</h3>
+      <p>创建 YAML 绑定文件，让设备树能描述你的硬件：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">YAML</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm"># dts/bindings/myvendor,mydriver.yaml</span>
+description: My custom device driver
+
+compatible: "myvendor,mydriver"
+
+include: [base.yaml]
+
+properties:
+  reg:
+    required: true
+  interrupts:
+    required: true</code></pre>
+      </div>
+
+      <p>然后在板级设备树中使用：</p>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-lang">DTS</span>
+          <button class="code-block-copy">复制</button>
+        </div>
+        <pre><code><span class="cm">/* 在板级设备树中添加自定义设备节点 */</span>
+mydev: mydev@40001000 {
+    compatible = "myvendor,mydriver";
+    reg = &lt;0x40001000 0x100&gt;;
+    interrupts = &lt;5 0&gt;;
+};</code></pre>
+      </div>
+
+      <blockquote>
+        <p><strong>小贴士：</strong>自定义驱动推荐放在项目的 <code>drivers/</code> 目录下，并在 <code>CMakeLists.txt</code> 中通过 <code>zephyr_include_directories()</code> 和 <code>target_sources()</code> 添加到构建系统。如果驱动比较通用，也可以考虑提交到 Zephyr 上游仓库，让更多人受益。</p>
+      </blockquote>
+
+      <div class="danger-card">
+        <p>自定义驱动开发中最常见的陷阱：<strong>忘记检查 device_is_ready()</strong>。在访问设备之前，务必调用此函数确认驱动初始化成功。否则，如果硬件初始化失败，后续操作可能导致未定义行为甚至系统崩溃。</p>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/assets/js/search-index.js"></script>
+  <script type="module" src="/assets/js/main.js"></script>
+</body>
+</html>

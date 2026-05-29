@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <rect width="600" height="400" fill="#0f172a" rx="12"/>
+  <text x="300" y="36" text-anchor="middle" fill="#e2e8f0" font-size="18" font-weight="700">MCUboot OTA 固件升级流程</text>
+  <rect x="40" y="60" width="240" height="48" rx="8" fill="#1e3a5f" stroke="#06b6d4" stroke-width="1.5"/>
+  <text x="160" y="80" text-anchor="middle" fill="#06b6d4" font-size="12" font-weight="600">MCUboot (Bootloader)</text>
+  <text x="160" y="98" text-anchor="middle" fill="#64748b" font-size="10">验证签名 → 选择启动分区</text>
+  <rect x="320" y="60" width="240" height="48" rx="8" fill="#1e3a5f" stroke="#8b5cf6" stroke-width="1.5"/>
+  <text x="440" y="80" text-anchor="middle" fill="#8b5cf6" font-size="12" font-weight="600">SMP Server (应用内)</text>
+  <text x="440" y="98" text-anchor="middle" fill="#64748b" font-size="10">接收固件 → 写入升级分区</text>
+  <text x="300" y="140" text-anchor="middle" fill="#94a3b8" font-size="13">Flash 分区布局</text>
+  <rect x="40" y="158" width="520" height="36" rx="6" fill="#1e3a5f" stroke="#06b6d4" stroke-width="1"/>
+  <text x="300" y="181" text-anchor="middle" fill="#06b6d4" font-size="12" font-weight="600">Slot 0 (主分区) — 当前运行的固件</text>
+  <rect x="40" y="204" width="520" height="36" rx="6" fill="#1e3a5f" stroke="#8b5cf6" stroke-width="1"/>
+  <text x="300" y="227" text-anchor="middle" fill="#8b5cf6" font-size="12" font-weight="600">Slot 1 (升级分区) — 接收新固件</text>
+  <rect x="40" y="250" width="520" height="36" rx="6" fill="#1e3a5f" stroke="#f59e0b" stroke-width="1"/>
+  <text x="300" y="273" text-anchor="middle" fill="#f59e0b" font-size="12" font-weight="600">Scratch (临时分区) — 单 Bank 模式使用</text>
+  <text x="300" y="316" text-anchor="middle" fill="#94a3b8" font-size="13">升级流程</text>
+  <text x="90" y="348" text-anchor="middle" fill="#06b6d4" font-size="11" font-weight="600">① 推送固件</text>
+  <text x="210" y="348" text-anchor="middle" fill="#8b5cf6" font-size="11" font-weight="600">② 写入 Slot1</text>
+  <text x="330" y="348" text-anchor="middle" fill="#10b981" font-size="11" font-weight="600">③ 重启验证</text>
+  <text x="460" y="348" text-anchor="middle" fill="#f59e0b" font-size="11" font-weight="600">④ 交换/确认</text>
+  <line x1="135" y1="344" x2="160" y2="344" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="255" y1="344" x2="280" y2="344" stroke="#64748b" stroke-width="1.5"/>
+  <line x1="375" y1="344" x2="400" y2="344" stroke="#64748b" stroke-width="1.5"/>
+  <text x="300" y="384" text-anchor="middle" fill="#64748b" font-size="11">传输方式: BLE / UART / USB / HTTP | 管理工具: mcumgr</text>
+</svg>
