@@ -5,6 +5,7 @@ import { resolve } from 'path'
 export default defineConfig({
   plugins: [tailwindcss()],
   root: '.',
+  base: '/zephyr-knowledge-base/',
   build: {
     outDir: 'dist',
     rollupOptions: {
