@@ -2,29 +2,29 @@ const NAV_CONFIG = [
   {
     section: '入门',
     items: [
-      { label: '入门概览', href: '/pages/overview.html', icon: 'home' },
-      { label: '开发环境搭建', href: '/pages/setup.html', icon: 'wrench' },
-      { label: '构建系统与配置', href: '/pages/build-system.html', icon: 'cubes' }
+      { label: '入门概览', href: 'overview.html', icon: 'home' },
+      { label: '开发环境搭建', href: 'setup.html', icon: 'wrench' },
+      { label: '构建系统与配置', href: 'build-system.html', icon: 'cubes' }
     ]
   },
   {
     section: '核心',
     items: [
-      { label: '内核核心', href: '/pages/kernel.html', icon: 'cpu' },
-      { label: '设备驱动模型', href: '/pages/drivers.html', icon: 'chip' }
+      { label: '内核核心', href: 'kernel.html', icon: 'cpu' },
+      { label: '设备驱动模型', href: 'drivers.html', icon: 'chip' }
     ]
   },
   {
     section: '进阶',
     items: [
-      { label: '网络与通信', href: '/pages/networking.html', icon: 'globe' },
-      { label: '高级特性', href: '/pages/advanced.html', icon: 'rocket' }
+      { label: '网络与通信', href: 'networking.html', icon: 'globe' },
+      { label: '高级特性', href: 'advanced.html', icon: 'rocket' }
     ]
   },
   {
     section: '实战',
     items: [
-      { label: '实战项目', href: '/pages/projects.html', icon: 'flask' }
+      { label: '实战项目', href: 'projects.html', icon: 'flask' }
     ]
   }
 ];
@@ -50,14 +50,19 @@ function getCurrentPage() {
   return match ? match[1] : 'home';
 }
 
+function getPagePrefix() {
+  return getCurrentPage() === 'home' ? 'pages/' : '';
+}
+
 function renderNavbar() {
   const navbar = document.createElement('nav');
   navbar.className = 'navbar';
+  const indexHref = getCurrentPage() === 'home' ? 'index.html' : '../index.html';
   navbar.innerHTML = `
     <button class="mobile-menu-btn" onclick="toggleSidebar()">
       ${ICONS.menu}
     </button>
-    <a href="/index.html" class="navbar-brand">
+    <a href="${indexHref}" class="navbar-brand">
       ${ICONS.zephyr}
       <span>Zephyr 知识库</span>
     </a>
@@ -72,6 +77,7 @@ function renderNavbar() {
 
 function renderSidebar() {
   const currentPage = getCurrentPage();
+  const prefix = getPagePrefix();
   const sidebar = document.createElement('aside');
   sidebar.className = 'sidebar';
   sidebar.id = 'sidebar';
@@ -81,8 +87,8 @@ function renderSidebar() {
     html += `<div class="sidebar-section">`;
     html += `<div class="sidebar-section-title">${section.section}</div>`;
     section.items.forEach(item => {
-      const isActive = currentPage === item.href.match(/\/pages\/(.+)\.html/)?.[1];
-      html += `<a href="${item.href}" class="sidebar-link${isActive ? ' active' : ''}">
+      const isActive = currentPage === item.href.replace('.html', '');
+      html += `<a href="${prefix}${item.href}" class="sidebar-link${isActive ? ' active' : ''}">
         ${ICONS[item.icon]}
         <span>${item.label}</span>
       </a>`;
@@ -162,6 +168,8 @@ function initSearch() {
 
   if (typeof SEARCH_INDEX === 'undefined') return;
 
+  const prefix = getPagePrefix();
+
   input.addEventListener('input', () => {
     const query = input.value.trim().toLowerCase();
     if (query.length < 2) {
@@ -180,7 +188,7 @@ function initSearch() {
     }
 
     results.innerHTML = matches.map(m => `
-      <a href="${m.href}" class="search-result-item">
+      <a href="${prefix}${m.href}" class="search-result-item">
         <div class="search-result-title">${m.title}</div>
         <div class="search-result-context">${m.section}</div>
       </a>
